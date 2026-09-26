@@ -100,7 +100,7 @@ Before implementation: identify the antenna; validate decoder paths; authenticat
   - 5 s late-arrival grace (`INGEST_LATE_GRACE_SECONDS`);
   - bounded memory queues (10,000 receiver events, 20,000 snapshots);
   - daily FAA download, deduplicated by SHA-256.
-- Not yet validated: host reboot, USB replug, PortaPack power-cycle mode, sleep behaviour (idle suspend remains enabled), access from a second LAN machine, and a Pi/remote database.
+- Not yet validated: host reboot, USB replug, PortaPack power-cycle mode, sleep behaviour at the login screen (session AC idle suspend is disabled), access from a second LAN machine, and a Pi/remote database.
 
 ## Technical references
 

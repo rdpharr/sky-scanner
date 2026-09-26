@@ -118,7 +118,7 @@ HEAD request is used.
 | Host reboot → collection without login | A reboot (user-initiated) |
 | USB unplug/replug recovery | Physical action; code backs off 5 s and retries |
 | PortaPack returns to HackRF mode after power loss | Physical check |
-| System sleep | The AC idle-suspend decision is still open; suspend stops collection |
+| Sleep at the login screen after reboot | Session AC idle suspend is disabled (COSMIC `suspend_on_ac_time = None`); battery idle suspend stays at 2 h. The greeter's idle policy is unverified: after a reboot, leave the machine at the login screen for more than 30 min and confirm `capture_intervals` has no gap |
 | LAN access from another machine | A second LAN client |
 | Daily FAA refresh importing a *new* dataset | Wait for FAA's next publication |
 | Pi receiver / remote DB | Deferred (needs a secured remote ingestion endpoint) |
