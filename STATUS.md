@@ -82,7 +82,28 @@ HEAD request is used.
 - After the grant fix, explorer reads `enriched_snapshots` over TLS; its writes
   are still rejected.
 
-## 978 MHz (UAT) — pipeline runs, live reception NOT demonstrated
+## 978 MHz (UAT): first live reception at 19:27 UTC
+
+The unattended pipeline decoded **17 UAT messages** in the 978 MHz turn at
+19:27:30–19:28:00 UTC. They were stored as 3 snapshots with
+`frequency_hz = 978000000`:
+
+| Bucket | ICAO | Callsign | Reg. | Aircraft | Alt baro/geom (ft) | GS (kt) | Track | Squawk |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 19:27:30 | AB86CF | — | N8416W | PIPER PA-28-180 | 4700 / 4825 | 77 | 128° | — |
+| 19:28:00 | AB86CF | N8416W | N8416W | PIPER PA-28-180 | 4500 / 4575 | 81 | 129° | 1200 |
+
+It was a VFR Cherokee (squawk 1200) descending southeast over northwest Las
+Vegas, near 36.33, −115.32. The address qualifier was `adsb_icao` (direct), and
+FAA enrichment matched it. This confirms the HackRF → SoapySDR → dump978-fa →
+normalization → storage path for UAT with live RF.
+
+By 21:22 UTC, 174 turns on 978 MHz had decoded 17 messages in total. UAT
+traffic here is sparse, and FIS-B ground-station uplinks have still never been
+decoded. Sensitivity on this band is therefore unknown and probably limited
+by the antenna and placement.
+
+### Earlier 978 diagnostics (before the first detection)
 
 - dump978-fa opens the HackRF via SoapySDR (`driver=hackrf`) and streams
   unattended within the alternation. Zero messages decoded so far.
@@ -114,7 +135,7 @@ HEAD request is used.
 
 | Item | Needs |
 | --- | --- |
-| Live UAT reception | Better antenna placement/outdoor antenna, or a time with UAT traffic |
+| UAT sensitivity / uplink reception | An antenna trimmed for 978 MHz or outdoor placement (one live UAT aircraft decoded so far) |
 | Host reboot → collection without login | A reboot (user-initiated) |
 | USB unplug/replug recovery | Physical action; code backs off 5 s and retries |
 | PortaPack returns to HackRF mode after power loss | Physical check |

@@ -86,8 +86,8 @@ Do not run two radio consumers together.
 ## Operational limits
 
 - Band switching has deliberate blind periods and decoder startup overhead.
-- 978 MHz UAT reception has not yet been demonstrated live at this site (no
-  frames decoded, including ground-station uplinks); see [STATUS.md](STATUS.md).
+- 978 MHz UAT reception is live-verified but sparse: one aircraft in the first
+  3 hours, and no ground-station uplinks decoded. See [STATUS.md](STATUS.md).
   dump978-fa stalls on SIGTERM, so 978 turns end with SIGKILL after 3 s.
 - The native decoder paths use 2.4 Msps (1090) and approximately 2.083333 Msps
   (978). These are below HackRF's preferred 8 Msps minimum for filtering quality;

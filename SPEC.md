@@ -92,7 +92,7 @@ Before implementation: identify the antenna; validate decoder paths; authenticat
 
 - Live 1090 MHz decoding, snapshot recording, and FAA enrichment were demonstrated through the full Compose pipeline.
 - Band alternation is recorded in `capture_intervals`.
-- 978 MHz runs unattended through dump978-fa/SoapySDR, but no live UAT frames have been decoded at this site (see STATUS.md). Acceptance criterion 1 is therefore met live for 1090 only; UAT is verified with fixtures.
+- 978 MHz runs unattended through dump978-fa/SoapySDR. The first live UAT aircraft (N8416W, 17 messages) was decoded and stored at 19:27 UTC. UAT traffic is sparse, and no ground-station uplinks have been decoded (see STATUS.md).
 - Decoders: readsb 3b5368a with a per-message JSON patch (1090, 2.4 Msps); dump978-fa f40aa9a (978, ~2.083 Msps via SoapySDR). High-rate capture with resampling is not implemented. A diagnostic offset-tuned 8.333 Msps path with ×4 decimation did not decode UAT either.
 - FAA metadata is versioned only on change, with an explicit `absent` status when an aircraft leaves the registry. This bounds growth from daily refreshes.
 - Chosen defaults:
