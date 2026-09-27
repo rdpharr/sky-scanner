@@ -72,6 +72,29 @@ their timestamps never advance unless received again. Null typed columns mean
 the value was unknown or expired. Different frequency observations remain
 separate. Rebroadcast reception frequency is not the original transmitter band.
 
+## Aircraft log page (LAN)
+
+The `web` service serves a read-only page at `http://<LAN IP>:8080` (port
+`WEB_PORT`, bound to `DB_BIND_ADDRESS`). It shows:
+
+- totals by aircraft class and ICAO type;
+- a sortable, filterable list of every aircraft, with first and last seen
+  dates in the browser's time zone;
+- a **Refresh** button that queries the database live;
+- a time-range filter (24 h, 7 days, 30 days, all time).
+
+The page uses the read-only `explorer` role over TLS; `/api/aircraft?days=N`
+returns the same data as JSON. It has no login and uses plain HTTP, so keep
+it on the home network and never port-forward it. The first load fetches the
+ICAO Doc 8643 type list from OpenSky; without it, classes show as "Other".
+Aggregating all snapshots slows as data grows; use a shorter range if an
+all-time refresh becomes slow.
+
+Existing installs need the explorer rule for the Docker network in
+`pg_hba.conf` (fresh installs get it from `docker/init-db.sh`):
+`hostssl sky_scanner explorer 172.16.0.0/12 scram-sha-256`, followed by
+`SELECT pg_reload_conf();`.
+
 ## Live demos and tests
 
 ```sh
@@ -109,7 +132,8 @@ Do not run two radio consumers together.
 - The FAA registry does not establish actual operator identity, flight route,
   or withheld registration details. Operator remains null without another source.
 - Ordinary bounded container logs support troubleshooting. There is no storage
-  monitoring, alert system, automated pruning, or dashboard.
+  monitoring, alert system, or automated pruning. The only UI is the read-only
+  LAN aircraft log page.
 - The receiver container has USB bus access for reconnects, without privileged
   mode. Database and application containers have no USB access.
 

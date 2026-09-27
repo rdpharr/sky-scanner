@@ -11,6 +11,7 @@ SQL
 cat > "$PGDATA/pg_hba.conf" <<EOF
 local all all trust
 hostssl sky_scanner sky_scanner 172.16.0.0/12 scram-sha-256
+hostssl sky_scanner explorer 172.16.0.0/12 scram-sha-256
 hostssl sky_scanner explorer ${LAN_SUBNET} scram-sha-256
 hostssl sky_scanner explorer 127.0.0.1/32 scram-sha-256
 host all all 0.0.0.0/0 reject

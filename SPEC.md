@@ -34,7 +34,7 @@ Snapshots deliberately discard intermediate changes within each 15-second interv
 
 ## Proposed architecture and data model
 
-Docker Compose services: receiver/decoder supervisor, Python ingestion worker, PostgreSQL with PostGIS, and a separate enrichment worker. Enrichment failures must not stop collection. Receiver and database endpoints are configurable for eventual Pi/remote-database deployment. No message broker is required initially.
+Docker Compose services: receiver/decoder supervisor, Python ingestion worker, PostgreSQL with PostGIS, a separate enrichment worker, and (added 2026-09-27) a read-only LAN aircraft log page. Enrichment failures must not stop collection. Receiver and database endpoints are configurable for eventual Pi/remote-database deployment. No message broker is required initially.
 
 Tables:
 
@@ -95,6 +95,7 @@ Before implementation: identify the antenna; validate decoder paths; authenticat
 - 978 MHz runs unattended through dump978-fa/SoapySDR. The first live UAT aircraft (N8416W, 17 messages) was decoded and stored at 19:27 UTC. UAT traffic is sparse, and no ground-station uplinks have been decoded (see STATUS.md).
 - Decoders: readsb 3b5368a with a per-message JSON patch (1090, 2.4 Msps); dump978-fa f40aa9a (978, ~2.083 Msps via SoapySDR). High-rate capture with resampling is not implemented. A diagnostic offset-tuned 8.333 Msps path with ×4 decimation did not decode UAT either.
 - Added OpenSky enrichment, 2026-09-26, at the user's request: the monthly crowdsourced snapshot is stored as a separate source and shown in `opensky_*` columns. Its operator values are attributed to OpenSky and unverified.
+- Added a read-only LAN aircraft log page (`web` service, port 8080), 2026-09-27, at the user's request. This relaxes the original no-dashboard scope. It uses the read-only role, has no write paths, and adds no monitoring or alerts.
 - FAA metadata is versioned only on change, with an explicit `absent` status when an aircraft leaves the registry. This bounds growth from daily refreshes.
 - Chosen defaults:
   - 60 s field carry-forward;

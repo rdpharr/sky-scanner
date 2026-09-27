@@ -98,6 +98,14 @@ HEAD request is used.
   block but is listed as TF-AME (Iceland). This is why OpenSky values appear
   only in `opensky_*` columns.
 
+### 9. LAN aircraft log page (2026-09-27)
+
+`http://192.168.1.121:8080` serves live totals and the aircraft list from the
+read-only role. It was verified in a browser against live data: Refresh
+re-queried the database and showed 578 aircraft, with dated first and last
+seen times. The explorer role needed a new pg_hba rule for the Docker network,
+applied to the live database and added to `docker/init-db.sh`.
+
 ## 978 MHz (UAT): first live reception at 19:27 UTC
 
 The unattended pipeline decoded **17 UAT messages** in the 978 MHz turn at
