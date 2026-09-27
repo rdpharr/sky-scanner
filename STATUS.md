@@ -82,6 +82,22 @@ HEAD request is used.
 - After the grant fix, explorer reads `enriched_snapshots` over TLS; its writes
   are still rejected.
 
+### 8. OpenSky enrichment (crowdsourced, separate source)
+
+- The enrichment worker found the newest snapshot
+  (`aircraft-database-complete-2025-08.csv`) by S3 listing and imported
+  587,401 records under `source_name = 'opensky'`.
+- It identified 17 of the 18 observed aircraft with no FAA match:
+  - long-haul airliners from Air France, KLM, Virgin Atlantic, Turkish,
+    Air Tahiti Nui and Korean Air;
+  - Air Canada, WestJet/Swoop and Porter jets;
+  - AE6488/TALON95, listed as military serial 19-21054, type H60.
+- ACF902, whose address decodes to N935HY, remains unidentified. It is absent
+  from all FAA files and is possibly an FAA privacy (PIA) address.
+- Some OpenSky data is stale. For example, 4CC54B lies in the Irish address
+  block but is listed as TF-AME (Iceland). This is why OpenSky values appear
+  only in `opensky_*` columns.
+
 ## 978 MHz (UAT): first live reception at 19:27 UTC
 
 The unattended pipeline decoded **17 UAT messages** in the 978 MHz turn at

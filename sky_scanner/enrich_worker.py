@@ -11,6 +11,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from . import opensky
 from .enrichment import FAA_REGISTRY_URL, parse_faa_registry
 from .storage import PostgresStorage
 
@@ -120,29 +121,91 @@ class EnrichmentWorker:
                 close()
 
 
+class OpenSkyWorker:
+    """Import the newest OpenSky crowdsourced snapshot as a separate source.
+
+    The S3 listing is checked first; a snapshot URL that was already imported
+    is skipped without downloading it. OpenSky values never replace FAA data.
+    """
+
+    def __init__(
+        self,
+        *,
+        storage_factory: Callable[[], Any] = PostgresStorage.from_env,
+        find_latest: Callable[[], str] = opensky.find_latest_snapshot,
+        download: Callable[[str], bytes] = opensky.download_snapshot,
+        min_records: int = 100_000,
+        emit: Callable[[str], None] = print,
+    ):
+        self.storage_factory = storage_factory
+        self.find_latest = find_latest
+        self.download = download
+        self.min_records = min_records
+        self.emit = emit
+
+    def process_once(self) -> dict[str, Any]:
+        storage = self.storage_factory()
+        try:
+            _query_one(storage, "SELECT 1 FROM enrichment_imports LIMIT 1")
+            url = self.find_latest()
+            if _query_one(storage, "SELECT EXISTS (SELECT 1 FROM enrichment_imports "
+                                   "WHERE source_url = %s)", (url,)):
+                summary = {"source": opensky.SOURCE_NAME, "status": "skipped", "url": url}
+            else:
+                retrieved_at = datetime.now(timezone.utc)
+                records = opensky.parse_opensky_database(
+                    self.download(url), source_url=url, retrieved_at=retrieved_at)
+                if len(records) < self.min_records:
+                    raise ValueError(f"OpenSky database has only {len(records)} records; "
+                                     f"minimum accepted is {self.min_records}")
+                import_id = storage.save_metadata_import(
+                    records, source_url=url, retrieved_at=retrieved_at,
+                    dataset_hash=records[0]["dataset_hash"], source_name=opensky.SOURCE_NAME)
+                summary = {"source": opensky.SOURCE_NAME, "status": "imported", "url": url,
+                           "records": len(records), "import_id": import_id}
+            self.emit(json.dumps(summary, separators=(",", ":")))
+            return summary
+        finally:
+            close = getattr(getattr(storage, "connection", None), "close", None)
+            if callable(close):
+                close()
+
+
 def run_forever(
-    worker: EnrichmentWorker,
+    worker: Any,
     *,
     once: bool = False,
     retry_seconds: float = 5,
     max_retry_seconds: float = 300,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Retry failures with bounded exponential backoff; import daily on success."""
+    """Retry failures with bounded exponential backoff; import daily on success.
+
+    ``worker`` may be one worker or a list; each source is attempted every
+    cycle, and one source failing never skips the others.
+    """
+    workers = list(worker) if isinstance(worker, (list, tuple)) else [worker]
     delay = retry_seconds
+    pending = list(workers)
     while True:
-        try:
-            worker.process_once()
-        except Exception as exc:
-            print(f"FAA enrichment attempt failed: {exc}", file=sys.stderr, flush=True)
-            if once:
-                raise
+        failed = []
+        for item in pending:
+            try:
+                item.process_once()
+            except Exception as exc:
+                print(f"{type(item).__name__} attempt failed: {exc}", file=sys.stderr, flush=True)
+                if once:
+                    raise
+                failed.append(item)
+        if once:
+            return
+        if failed:
+            pending = failed
             sleep(delay)
             delay = min(max_retry_seconds, max(retry_seconds, delay * 2))
             continue
-        if once:
-            return
         delay = retry_seconds
+        pending = list(workers)
         sleep(DAILY_SECONDS)
 
 
@@ -152,8 +215,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         min_records = int(os.environ.get("SKY_SCANNER_ENRICHMENT_MIN_RECORDS", DEFAULT_MIN_RECORDS))
-        worker = EnrichmentWorker(min_records=min_records)
-        run_forever(worker, once=args.once)
+        workers: list[Any] = [EnrichmentWorker(min_records=min_records)]
+        if os.environ.get("OPENSKY_ENABLED", "1") != "0":
+            workers.append(OpenSkyWorker())
+        run_forever(workers, once=args.once)
     except Exception as exc:
         print(f"FAA enrichment worker stopped: {exc}", file=sys.stderr, flush=True)
         return 1

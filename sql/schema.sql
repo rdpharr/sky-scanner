@@ -101,6 +101,17 @@ END $$;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS registry_status text
     NOT NULL DEFAULT 'present' CHECK (registry_status IN ('present', 'absent'));
 ALTER TABLE enrichment_imports ADD COLUMN IF NOT EXISTS changed_count integer;
+-- Metadata sources are kept apart: 'faa_registry' (official) and 'opensky'
+-- (crowdsourced, unverified). Views never let one source replace the other.
+ALTER TABLE enrichment_imports ADD COLUMN IF NOT EXISTS source_name text
+    NOT NULL DEFAULT 'faa_registry';
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS source_name text
+    NOT NULL DEFAULT 'faa_registry';
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS icao_type_code text;
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS operator_icao text;
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS country text;
+CREATE INDEX IF NOT EXISTS aircraft_metadata_source_lookup_idx
+    ON aircraft_metadata (source_name, address_type, address, retrieved_at DESC);
 CREATE INDEX IF NOT EXISTS aircraft_metadata_lookup_idx
     ON aircraft_metadata (address_type, address, retrieved_at DESC);
 
@@ -114,17 +125,33 @@ CREATE OR REPLACE VIEW enriched_snapshots AS
 SELECT s.*, m.registration, m.manufacturer, m.model, m.aircraft_type,
        m.registered_owner, m.operator, m.source_url AS metadata_source_url,
        m.retrieved_at AS metadata_retrieved_at, m.dataset_hash AS metadata_dataset_hash,
-       m.registry_status
+       m.registry_status,
+       o.registration AS opensky_registration, o.manufacturer AS opensky_manufacturer,
+       o.model AS opensky_model, o.icao_type_code AS opensky_type_code,
+       o.operator AS opensky_operator, o.operator_icao AS opensky_operator_icao,
+       o.registered_owner AS opensky_owner, o.country AS opensky_country,
+       o.source_url AS opensky_source_url, o.retrieved_at AS opensky_retrieved_at
 FROM aircraft_snapshots AS s
 LEFT JOIN LATERAL (
     SELECT metadata.*
     FROM aircraft_metadata AS metadata
-    WHERE metadata.address_type = s.address_type
+    WHERE metadata.source_name = 'faa_registry'
+      AND metadata.address_type = s.address_type
       AND metadata.address = s.address
       AND metadata.retrieved_at <= s.bucket_start + interval '15 seconds'
     ORDER BY metadata.retrieved_at DESC, metadata.id DESC
     LIMIT 1
-) AS m ON true;
+) AS m ON true
+LEFT JOIN LATERAL (
+    SELECT o.*
+    FROM aircraft_metadata AS o
+    WHERE o.source_name = 'opensky' AND o.registry_status = 'present'
+      AND o.address_type = s.address_type
+      AND o.address = s.address
+      AND o.retrieved_at <= s.bucket_start + interval '15 seconds'
+    ORDER BY o.retrieved_at DESC, o.id DESC
+    LIMIT 1
+) AS o ON true;
 
 -- Explicitly current enrichment for users exploring older observations.
 -- Unlike enriched_snapshots, this intentionally may show later metadata.
@@ -132,16 +159,31 @@ CREATE OR REPLACE VIEW enriched_snapshots_current AS
 SELECT s.*, m.registration, m.manufacturer, m.model, m.aircraft_type,
        m.registered_owner, m.operator, m.source_url AS metadata_source_url,
        m.retrieved_at AS metadata_retrieved_at, m.dataset_hash AS metadata_dataset_hash,
-       m.registry_status
+       m.registry_status,
+       o.registration AS opensky_registration, o.manufacturer AS opensky_manufacturer,
+       o.model AS opensky_model, o.icao_type_code AS opensky_type_code,
+       o.operator AS opensky_operator, o.operator_icao AS opensky_operator_icao,
+       o.registered_owner AS opensky_owner, o.country AS opensky_country,
+       o.source_url AS opensky_source_url, o.retrieved_at AS opensky_retrieved_at
 FROM aircraft_snapshots AS s
 LEFT JOIN LATERAL (
     SELECT metadata.*
     FROM aircraft_metadata AS metadata
-    WHERE metadata.address_type = s.address_type
+    WHERE metadata.source_name = 'faa_registry'
+      AND metadata.address_type = s.address_type
       AND metadata.address = s.address
     ORDER BY metadata.retrieved_at DESC, metadata.id DESC
     LIMIT 1
-) AS m ON true;
+) AS m ON true
+LEFT JOIN LATERAL (
+    SELECT o.*
+    FROM aircraft_metadata AS o
+    WHERE o.source_name = 'opensky' AND o.registry_status = 'present'
+      AND o.address_type = s.address_type
+      AND o.address = s.address
+    ORDER BY o.retrieved_at DESC, o.id DESC
+    LIMIT 1
+) AS o ON true;
 
 -- Default privileges only cover objects created after they were set; grant
 -- explicitly so the read-only exploration role always sees every table/view.

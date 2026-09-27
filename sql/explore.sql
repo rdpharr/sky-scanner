@@ -26,3 +26,16 @@ ORDER BY last_received_at;
 SELECT bucket_start, address, registration, manufacturer, model,
        registered_owner, operator, metadata_source_url, metadata_retrieved_at
 FROM enriched_snapshots_current ORDER BY bucket_start DESC LIMIT 20;
+
+-- FAA registry and OpenSky (crowdsourced, unverified) are separate columns.
+-- Prefer FAA; fall back to OpenSky only when FAA has no match, and say so.
+SELECT address, callsign,
+       coalesce(registration, opensky_registration) AS registration,
+       coalesce(manufacturer || ' ' || model, opensky_model) AS aircraft,
+       opensky_type_code, opensky_operator, opensky_country,
+       CASE WHEN registration IS NOT NULL THEN 'faa_registry'
+            WHEN opensky_registration IS NOT NULL OR opensky_model IS NOT NULL THEN 'opensky'
+       END AS identity_source
+FROM enriched_snapshots_current
+WHERE bucket_start > now() - interval '1 hour'
+ORDER BY bucket_start DESC LIMIT 50;

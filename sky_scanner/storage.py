@@ -45,13 +45,14 @@ DO NOTHING
 
 
 _METADATA_COLUMNS = ("address_type, address, registration, manufacturer, model, "
-                     "aircraft_type, registered_owner, operator")
+                     "aircraft_type, registered_owner, operator, icao_type_code, "
+                     "operator_icao, country")
 
 _METADATA_STAGE_CREATE = """
 CREATE TEMP TABLE sky_metadata_stage (
  address_type text NOT NULL, address text NOT NULL, registration text,
  manufacturer text, model text, aircraft_type text, registered_owner text,
- operator text
+ operator text, icao_type_code text, operator_icao text, country text
 ) ON COMMIT DROP
 """
 
@@ -59,37 +60,39 @@ CREATE TEMP TABLE sky_metadata_stage (
 _METADATA_INSERT_CHANGED = """
 INSERT INTO aircraft_metadata
  (address_type, address, registration, manufacturer, model, aircraft_type,
-  registered_owner, operator, registry_status, source_url, retrieved_at,
-  dataset_hash, import_id)
+  registered_owner, operator, icao_type_code, operator_icao, country,
+  registry_status, source_name, source_url, retrieved_at, dataset_hash, import_id)
 SELECT s.address_type, s.address, s.registration, s.manufacturer, s.model,
-       s.aircraft_type, s.registered_owner, s.operator, 'present',
+       s.aircraft_type, s.registered_owner, s.operator, s.icao_type_code,
+       s.operator_icao, s.country, 'present', %(source_name)s,
        %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
 FROM (SELECT DISTINCT ON (address_type, address) * FROM sky_metadata_stage
       ORDER BY address_type, address) AS s
 LEFT JOIN LATERAL (
     SELECT * FROM aircraft_metadata AS m
     WHERE m.address_type = s.address_type AND m.address = s.address
-      AND m.source_url = %(source_url)s
+      AND m.source_name = %(source_name)s
     ORDER BY m.retrieved_at DESC, m.id DESC LIMIT 1
 ) AS latest ON true
 WHERE latest.id IS NULL OR latest.registry_status <> 'present'
    OR (latest.registration, latest.manufacturer, latest.model, latest.aircraft_type,
-       latest.registered_owner, latest.operator)
+       latest.registered_owner, latest.operator, latest.icao_type_code,
+       latest.operator_icao, latest.country)
       IS DISTINCT FROM
       (s.registration, s.manufacturer, s.model, s.aircraft_type,
-       s.registered_owner, s.operator)
+       s.registered_owner, s.operator, s.icao_type_code, s.operator_icao, s.country)
 ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
 """
 
 # Previously present aircraft that this dataset no longer lists.
 _METADATA_INSERT_ABSENT = """
 INSERT INTO aircraft_metadata
- (address_type, address, registry_status, source_url, retrieved_at,
+ (address_type, address, registry_status, source_name, source_url, retrieved_at,
   dataset_hash, import_id)
-SELECT latest.address_type, latest.address, 'absent',
+SELECT latest.address_type, latest.address, 'absent', %(source_name)s,
        %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
 FROM (SELECT DISTINCT ON (address_type, address) address_type, address, registry_status
-      FROM aircraft_metadata WHERE source_url = %(source_url)s
+      FROM aircraft_metadata WHERE source_name = %(source_name)s
       ORDER BY address_type, address, retrieved_at DESC, id DESC) AS latest
 WHERE latest.registry_status = 'present'
   AND NOT EXISTS (SELECT 1 FROM sky_metadata_stage AS s
@@ -197,13 +200,13 @@ class PostgresStorage:
     def save_metadata_import(
         self, records: Iterable[dict[str, Any]], *, source_url: str | None = None,
         retrieved_at: Any | None = None, dataset_hash: str | None = None,
-        batch_size: int = 5000,
+        batch_size: int = 5000, source_name: str = "faa_registry",
     ) -> str:
         """Save import provenance and only the metadata versions that changed.
 
         Records are staged in a transaction-local temporary table. A new
         ``present`` version is written only when an aircraft is new or its
-        registry fields differ from its latest version from the same source; an
+        registry fields differ from its latest version from the same ``source_name``; an
         ``absent`` version is written when a previously present aircraft is no
         longer listed. Unchanged daily refreshes therefore add no metadata rows.
         Uses the parser's provenance when import-level values are omitted.
@@ -224,18 +227,18 @@ class PostgresStorage:
         try:
             cursor.execute(
                 """INSERT INTO enrichment_imports
-                   (id, source_url, retrieved_at, dataset_hash, record_count)
-                   VALUES (%s, %s, %s, %s, %s)
+                   (id, source_url, retrieved_at, dataset_hash, record_count, source_name)
+                   VALUES (%s, %s, %s, %s, %s, %s)
                    ON CONFLICT (source_url, dataset_hash) DO UPDATE
                    SET record_count=EXCLUDED.record_count
                    RETURNING id""",
-                (import_id, source_url, retrieved, dataset_hash, len(records)),
+                (import_id, source_url, retrieved, dataset_hash, len(records), source_name),
             )
             row = cursor.fetchone()
             if row:
                 import_id = row[0]
             cursor.execute(_METADATA_STAGE_CREATE)
-            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for offset in range(0, len(records), batch_size):
                 chunk = records[offset:offset + batch_size]
                 values = [(
@@ -244,11 +247,13 @@ class PostgresStorage:
                     record.get("registration"), record.get("manufacturer"),
                     record.get("model"), record.get("aircraft_type"),
                     record.get("registered_owner"), record.get("operator"),
+                    record.get("icao_type_code"), record.get("operator_icao"),
+                    record.get("country"),
                 ) for record in chunk]
                 if values:
                     cursor.executemany(stage_sql, values)
             cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
-            params = {"source_url": source_url, "retrieved_at": retrieved,
+            params = {"source_name": source_name, "source_url": source_url, "retrieved_at": retrieved,
                       "dataset_hash": dataset_hash, "import_id": import_id}
             cursor.execute(_METADATA_INSERT_CHANGED, params)
             changed = max(0, int(cursor.rowcount or 0))

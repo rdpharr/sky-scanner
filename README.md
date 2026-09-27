@@ -53,6 +53,13 @@ ORDER BY bucket_start DESC LIMIT 20;
 FAA metadata is versioned on change: a daily refresh writes rows only for new
 or changed aircraft, plus a `registry_status = 'absent'` version when an
 aircraft leaves the registry. Unchanged refreshes add no metadata rows.
+The worker also imports the newest monthly [OpenSky aircraft database](https://opensky-network.org/data/aircraft)
+snapshot. It adds international and military addresses the FAA registry lacks.
+OpenSky data is crowdsourced, unlicensed and provided "as is", and is sometimes
+stale. It is stored as a separate source (`source_name = 'opensky'`) and exposed
+only in `opensky_*` view columns (registration, model, type code, operator,
+owner, country). It never replaces FAA values. A snapshot URL that was already
+imported is skipped without downloading. Set `OPENSKY_ENABLED=0` to disable it.
 `enriched_snapshots` joins metadata available as of each observation;
 `enriched_snapshots_current` explicitly joins the latest imported metadata.
 `latest_aircraft` contains the most recent observation per identity/band, even

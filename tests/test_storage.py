@@ -141,6 +141,56 @@ class StorageTests(unittest.TestCase):
         self.assertIs(storage.connection, self.connection)
         fake_psycopg.connect.assert_called_once_with("postgresql://test/db")
 
+    def test_metadata_import_uses_default_source_name_when_omitted(self):
+        self.cursor.fetchone.return_value = None
+        records = [{
+            "icao_address": "ABC123", "registration": "N1",
+            "manufacturer": "ACME", "model": "1", "aircraft_type": "4",
+            "registered_owner": "Owner", "operator": None,
+            "icao_type_code": "B77W", "operator_icao": "KAL", "country": "US",
+            "source_url": "https://example.test/data", "retrieved_at": "2026-01-01T00:00:00Z",
+            "dataset_hash": "sha256",
+        }]
+        with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
+            self.storage.save_metadata_import(records, batch_size=1)
+        stage_rows = self.cursor.executemany.call_args_list[0].args[1]
+        self.assertEqual(len(stage_rows[0]), 11)
+        self.assertEqual(stage_rows[0], (
+            "icao", "ABC123", "N1", "ACME", "1", "4", "Owner", None,
+            "B77W", "KAL", "US",
+        ))
+        insert_import_params = self.cursor.execute.call_args_list[0].args[1]
+        self.assertEqual(insert_import_params[-1], "faa_registry")
+        calls_by_sql = {c.args[0]: c.args[1] for c in self.cursor.execute.call_args_list
+                        if len(c.args) > 1 and isinstance(c.args[1], dict)}
+        self.assertEqual(calls_by_sql[_METADATA_INSERT_CHANGED]["source_name"], "faa_registry")
+        self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT]["source_name"], "faa_registry")
+
+    def test_metadata_import_passes_source_name_to_sql_and_params(self):
+        self.cursor.fetchone.return_value = None
+        records = [{
+            "icao_address": "abc123", "registration": None,
+            "manufacturer": None, "model": None, "aircraft_type": None,
+            "registered_owner": "Korean Air", "operator": "Korean Air",
+            "icao_type_code": "B77W", "operator_icao": "KAL", "country": "Republic of Korea",
+            "source_url": "https://example.test/opensky.csv", "retrieved_at": "2026-01-01T00:00:00Z",
+            "dataset_hash": "sha256-opensky",
+        }]
+        self.storage.save_metadata_import(records, batch_size=1, source_name="opensky")
+        insert_import_params = self.cursor.execute.call_args_list[0].args[1]
+        self.assertEqual(insert_import_params[-1], "opensky")
+        stage_rows = self.cursor.executemany.call_args_list[0].args[1]
+        self.assertEqual(stage_rows[0], (
+            "icao", "abc123", None, None, None, None, "Korean Air", "Korean Air",
+            "B77W", "KAL", "Republic of Korea",
+        ))
+        calls_by_sql = {c.args[0]: c.args[1] for c in self.cursor.execute.call_args_list
+                        if len(c.args) > 1 and isinstance(c.args[1], dict)}
+        self.assertEqual(calls_by_sql[_METADATA_INSERT_CHANGED]["source_name"], "opensky")
+        self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT]["source_name"], "opensky")
+        self.assertIn("m.source_name = %(source_name)s", _METADATA_INSERT_CHANGED)
+        self.assertIn("WHERE source_name = %(source_name)s", _METADATA_INSERT_ABSENT)
+
     def test_same_source_hash_reimport_does_not_create_new_metadata_version(self):
         records = [{
             "icao_address": "ABC123", "registration": "N12345",
