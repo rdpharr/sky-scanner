@@ -46,13 +46,14 @@ DO NOTHING
 
 _METADATA_COLUMNS = ("address_type, address, registration, manufacturer, model, "
                      "aircraft_type, registered_owner, operator, icao_type_code, "
-                     "operator_icao, country")
+                     "operator_icao, country, category, tags")
 
 _METADATA_STAGE_CREATE = """
 CREATE TEMP TABLE sky_metadata_stage (
  address_type text NOT NULL, address text NOT NULL, registration text,
  manufacturer text, model text, aircraft_type text, registered_owner text,
- operator text, icao_type_code text, operator_icao text, country text
+ operator text, icao_type_code text, operator_icao text, country text,
+ category text, tags text
 ) ON COMMIT DROP
 """
 
@@ -60,11 +61,11 @@ CREATE TEMP TABLE sky_metadata_stage (
 _METADATA_INSERT_CHANGED = """
 INSERT INTO aircraft_metadata
  (address_type, address, registration, manufacturer, model, aircraft_type,
-  registered_owner, operator, icao_type_code, operator_icao, country,
+  registered_owner, operator, icao_type_code, operator_icao, country, category, tags,
   registry_status, source_name, source_url, retrieved_at, dataset_hash, import_id)
 SELECT s.address_type, s.address, s.registration, s.manufacturer, s.model,
        s.aircraft_type, s.registered_owner, s.operator, s.icao_type_code,
-       s.operator_icao, s.country, 'present', %(source_name)s,
+       s.operator_icao, s.country, s.category, s.tags, 'present', %(source_name)s,
        %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
 FROM (SELECT DISTINCT ON (address_type, address) * FROM sky_metadata_stage
       ORDER BY address_type, address) AS s
@@ -77,10 +78,11 @@ LEFT JOIN LATERAL (
 WHERE latest.id IS NULL OR latest.registry_status <> 'present'
    OR (latest.registration, latest.manufacturer, latest.model, latest.aircraft_type,
        latest.registered_owner, latest.operator, latest.icao_type_code,
-       latest.operator_icao, latest.country)
+       latest.operator_icao, latest.country, latest.category, latest.tags)
       IS DISTINCT FROM
       (s.registration, s.manufacturer, s.model, s.aircraft_type,
-       s.registered_owner, s.operator, s.icao_type_code, s.operator_icao, s.country)
+       s.registered_owner, s.operator, s.icao_type_code, s.operator_icao, s.country,
+       s.category, s.tags)
 ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
 """
 
@@ -238,7 +240,7 @@ class PostgresStorage:
             if row:
                 import_id = row[0]
             cursor.execute(_METADATA_STAGE_CREATE)
-            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             for offset in range(0, len(records), batch_size):
                 chunk = records[offset:offset + batch_size]
                 values = [(
@@ -248,7 +250,7 @@ class PostgresStorage:
                     record.get("model"), record.get("aircraft_type"),
                     record.get("registered_owner"), record.get("operator"),
                     record.get("icao_type_code"), record.get("operator_icao"),
-                    record.get("country"),
+                    record.get("country"), record.get("category"), record.get("tags"),
                 ) for record in chunk]
                 if values:
                     cursor.executemany(stage_sql, values)
@@ -268,6 +270,70 @@ class PostgresStorage:
             raise
         finally:
             cursor.close()
+
+    def replace_military_operator_codes(
+        self, codes: Iterable[dict[str, str]], *, source_url: str, retrieved_at: Any,
+        dataset_hash: str,
+    ) -> str:
+        """Atomically replace the military operator code set, recording provenance."""
+        codes = list(codes)
+        if not codes:
+            raise ValueError("refusing to replace military operator codes with an empty set")
+        import_id = uuid.uuid4()
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(
+                """INSERT INTO enrichment_imports
+                   (id, source_url, retrieved_at, dataset_hash, record_count, source_name)
+                   VALUES (%s, %s, %s, %s, %s, 'military_operator_codes')
+                   ON CONFLICT (source_url, dataset_hash) DO UPDATE
+                   SET record_count=EXCLUDED.record_count
+                   RETURNING id""",
+                (import_id, source_url, _iso_datetime(retrieved_at), dataset_hash, len(codes)),
+            )
+            row = cursor.fetchone()
+            if row:
+                import_id = row[0]
+            cursor.execute("DELETE FROM military_operator_codes")
+            cursor.executemany(
+                "INSERT INTO military_operator_codes (code, name, import_id) VALUES (%s, %s, %s)",
+                [(c["code"], c["name"], import_id) for c in codes])
+            self.connection.commit()
+            return str(import_id)
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    def save_callword_lookup(self, word: str, status: str, source_url: str,
+                             data: dict[str, Any] | None, fetched_at: Any | None = None) -> None:
+        self._execute(
+            """INSERT INTO callword_lookups (word, status, source_url, fetched_at, data)
+               VALUES (%s, %s, %s, %s, %s::jsonb)
+               ON CONFLICT (word) DO UPDATE SET status=EXCLUDED.status,
+               source_url=EXCLUDED.source_url, fetched_at=EXCLUDED.fetched_at, data=EXCLUDED.data""",
+            (word, status, source_url, _iso_datetime(fetched_at or datetime.now(timezone.utc)),
+             json.dumps(data) if data is not None else None),
+        )
+
+    def save_type_image(self, designator: str, model_name: str | None, method: str,
+                        result: dict[str, Any] | None, fetched_at: Any | None = None) -> None:
+        result = result or {}
+        self._execute(
+            """INSERT INTO aircraft_type_images (designator, model_name, status, method, title,
+                   description, article_url, image_url, file_url, fetched_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (designator) DO UPDATE SET model_name=EXCLUDED.model_name,
+               status=EXCLUDED.status, method=EXCLUDED.method, title=EXCLUDED.title,
+               description=EXCLUDED.description, article_url=EXCLUDED.article_url,
+               image_url=EXCLUDED.image_url, file_url=EXCLUDED.file_url,
+               fetched_at=EXCLUDED.fetched_at""",
+            (designator, model_name, "found" if result else "not_found", method,
+             result.get("title"), result.get("description"), result.get("article_url"),
+             result.get("image_url"), result.get("file_url"),
+             _iso_datetime(fetched_at or datetime.now(timezone.utc))),
+        )
 
     @staticmethod
     def _snapshot_params(row: dict[str, Any]) -> tuple[Any, ...]:

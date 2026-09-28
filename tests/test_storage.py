@@ -154,10 +154,10 @@ class StorageTests(unittest.TestCase):
         with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
             self.storage.save_metadata_import(records, batch_size=1)
         stage_rows = self.cursor.executemany.call_args_list[0].args[1]
-        self.assertEqual(len(stage_rows[0]), 11)
+        self.assertEqual(len(stage_rows[0]), 13)
         self.assertEqual(stage_rows[0], (
             "icao", "ABC123", "N1", "ACME", "1", "4", "Owner", None,
-            "B77W", "KAL", "US",
+            "B77W", "KAL", "US", None, None,
         ))
         insert_import_params = self.cursor.execute.call_args_list[0].args[1]
         self.assertEqual(insert_import_params[-1], "faa_registry")
@@ -182,7 +182,7 @@ class StorageTests(unittest.TestCase):
         stage_rows = self.cursor.executemany.call_args_list[0].args[1]
         self.assertEqual(stage_rows[0], (
             "icao", "abc123", None, None, None, None, "Korean Air", "Korean Air",
-            "B77W", "KAL", "Republic of Korea",
+            "B77W", "KAL", "Republic of Korea", None, None,
         ))
         calls_by_sql = {c.args[0]: c.args[1] for c in self.cursor.execute.call_args_list
                         if len(c.args) > 1 and isinstance(c.args[1], dict)}
@@ -219,6 +219,101 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(params["source_url"], "https://example.test/data")
         self.assertEqual(params["dataset_hash"], "same-hash")
         self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT], params)
+
+    def test_replace_military_operator_codes_rejects_empty_list_without_touching_cursor(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.storage.replace_military_operator_codes(
+                [], source_url="https://example.test/ops.csv",
+                retrieved_at=datetime(2026, 1, 1, tzinfo=timezone.utc), dataset_hash="h")
+        self.connection.cursor.assert_not_called()
+
+    def test_replace_military_operator_codes_deletes_then_inserts_and_commits(self):
+        self.cursor.fetchone.return_value = None
+        codes = [
+            {"code": "RCH", "name": "Air Mobility Command"},
+            {"code": "CNV", "name": "US Navy"},
+        ]
+        with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
+            result = self.storage.replace_military_operator_codes(
+                codes, source_url="https://example.test/ops.csv",
+                retrieved_at=datetime(2026, 1, 1, tzinfo=timezone.utc), dataset_hash="h")
+        self.assertEqual(result, "import-id")
+        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
+        self.assertTrue(any("'military_operator_codes'" in sql for sql in executed_sql))
+        self.assertTrue(any(sql.strip().startswith("DELETE FROM military_operator_codes")
+                            for sql in executed_sql))
+        insert_sql, insert_rows = self.cursor.executemany.call_args.args
+        self.assertIn("INSERT INTO military_operator_codes", insert_sql)
+        self.assertEqual(insert_rows, [
+            ("RCH", "Air Mobility Command", "import-id"),
+            ("CNV", "US Navy", "import-id"),
+        ])
+        self.connection.commit.assert_called_once()
+
+    def test_replace_military_operator_codes_rolls_back_on_failure(self):
+        self.cursor.execute.side_effect = RuntimeError("boom")
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            self.storage.replace_military_operator_codes(
+                [{"code": "RCH", "name": "x"}], source_url="u",
+                retrieved_at=datetime(2026, 1, 1, tzinfo=timezone.utc), dataset_hash="h")
+        self.connection.rollback.assert_called_once()
+        self.connection.commit.assert_not_called()
+
+    def test_save_callword_lookup_encodes_status_and_data_as_json(self):
+        fetched_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.storage.save_callword_lookup(
+            "TALON", "found", "https://wwi/TALON", {"types": [{"name": "H60", "count": 27}]},
+            fetched_at=fetched_at)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertIn("INSERT INTO callword_lookups", sql)
+        self.assertEqual(params[0], "TALON")
+        self.assertEqual(params[1], "found")
+        self.assertEqual(params[2], "https://wwi/TALON")
+        self.assertEqual(json.loads(params[4]), {"types": [{"name": "H60", "count": 27}]})
+        self.connection.commit.assert_called_once()
+
+    def test_save_callword_lookup_none_data_is_null_param(self):
+        self.storage.save_callword_lookup("TALON", "not_found", "https://wwi/TALON", None)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertEqual(params[1], "not_found")
+        self.assertIsNone(params[4])
+
+    def test_save_type_image_found_result_sets_status_and_fields(self):
+        fetched_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        result = {
+            "title": "Boeing 737-800", "description": "Narrow-body airliner",
+            "article_url": "https://en.wikipedia.org/wiki/Boeing_737_Next_Generation",
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/X.jpg/330px-X.jpg",
+            "file_url": "https://commons.wikimedia.org/wiki/File:X.jpg",
+        }
+        self.storage.save_type_image("B738", "Boeing 737-800", "designator_list", result,
+                                     fetched_at=fetched_at)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertIn("INSERT INTO aircraft_type_images", sql)
+        self.assertIn("ON CONFLICT (designator)", sql)
+        self.assertEqual(params[0], "B738")
+        self.assertEqual(params[1], "Boeing 737-800")
+        self.assertEqual(params[2], "found")
+        self.assertEqual(params[3], "designator_list")
+        self.assertEqual(params[4], "Boeing 737-800")
+        self.assertEqual(params[5], "Narrow-body airliner")
+        self.assertEqual(params[6], result["article_url"])
+        self.assertEqual(params[7], result["image_url"])
+        self.assertEqual(params[8], result["file_url"])
+        self.connection.commit.assert_called_once()
+
+    def test_save_type_image_none_result_sets_not_found_with_null_fields(self):
+        self.storage.save_type_image("ZZZZ", "Unknown Model", "search", None)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertEqual(params[0], "ZZZZ")
+        self.assertEqual(params[1], "Unknown Model")
+        self.assertEqual(params[2], "not_found")
+        self.assertEqual(params[3], "search")
+        self.assertIsNone(params[4])
+        self.assertIsNone(params[5])
+        self.assertIsNone(params[6])
+        self.assertIsNone(params[7])
+        self.assertIsNone(params[8])
 
 
 if __name__ == "__main__":

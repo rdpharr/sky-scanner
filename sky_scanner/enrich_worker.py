@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import time
+import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from . import opensky
+from . import aircraft_log, military, opensky, wikipedia
 from .enrichment import FAA_REGISTRY_URL, parse_faa_registry
 from .storage import PostgresStorage
 
@@ -171,6 +174,219 @@ class OpenSkyWorker:
                 close()
 
 
+class MilitaryReferenceWorker:
+    """Daily refresh of military identification reference data.
+
+    Imports the plane-alert-db military list (hex -> operator/type) as its own
+    metadata source and replaces the military ICAO operator code set. Each is
+    skipped when its content hash is unchanged.
+    """
+
+    interval_seconds = DAILY_SECONDS
+
+    def __init__(self, *, storage_factory: Callable[[], Any] = PostgresStorage.from_env,
+                 download_plane_alert: Callable[[], bytes] = military.download_plane_alert_mil,
+                 download_operators: Callable[[], bytes] = military.download_operator_codes,
+                 min_aircraft: int = 1000, emit: Callable[[str], None] = print):
+        self.storage_factory = storage_factory
+        self.download_plane_alert = download_plane_alert
+        self.download_operators = download_operators
+        self.min_aircraft = min_aircraft
+        self.emit = emit
+
+    def process_once(self) -> dict[str, Any]:
+        storage = self.storage_factory()
+        try:
+            _query_one(storage, "SELECT 1 FROM military_operator_codes LIMIT 1")
+            summary: dict[str, Any] = {"source": "military_reference"}
+            data = self.download_plane_alert()
+            digest = hashlib.sha256(data).hexdigest()
+            if _query_one(storage, "SELECT EXISTS (SELECT 1 FROM enrichment_imports "
+                                   "WHERE source_url = %s AND dataset_hash = %s)",
+                          (military.PLANE_ALERT_MIL_URL, digest)):
+                summary["plane_alert"] = "skipped"
+            else:
+                records = military.parse_plane_alert_mil(data)
+                if len(records) < self.min_aircraft:
+                    raise ValueError(f"plane-alert military list has only {len(records)} aircraft")
+                storage.save_metadata_import(
+                    records, source_url=military.PLANE_ALERT_MIL_URL,
+                    retrieved_at=records[0]["retrieved_at"], dataset_hash=digest,
+                    source_name=military.PLANE_ALERT_SOURCE)
+                summary["plane_alert"] = f"imported {len(records)}"
+            data = self.download_operators()
+            digest = hashlib.sha256(data).hexdigest()
+            if _query_one(storage, "SELECT EXISTS (SELECT 1 FROM enrichment_imports "
+                                   "WHERE source_url = %s AND dataset_hash = %s)",
+                          (military.OPERATOR_CODES_URL, digest)):
+                summary["operator_codes"] = "skipped"
+            else:
+                codes = military.parse_military_operators(data)
+                storage.replace_military_operator_codes(
+                    codes, source_url=military.OPERATOR_CODES_URL,
+                    retrieved_at=datetime.now(timezone.utc), dataset_hash=digest)
+                summary["operator_codes"] = f"imported {len(codes)}"
+            self.emit(json.dumps(summary, separators=(",", ":")))
+            return summary
+        finally:
+            close = getattr(getattr(storage, "connection", None), "close", None)
+            if callable(close):
+                close()
+
+
+# Callsigns recently used by aircraft identified as military by a local check.
+MILITARY_CALLSIGNS_SQL = """
+SELECT DISTINCT btrim(s.callsign)
+FROM aircraft_snapshots s
+WHERE s.bucket_start >= now() - make_interval(days => %(days)s)
+  AND btrim(coalesce(s.callsign, '')) <> ''
+  AND (left(s.address, 2) IN ('AE', 'AF')
+       OR EXISTS (SELECT 1 FROM aircraft_metadata m
+                  WHERE m.source_name = 'plane_alert_mil' AND m.registry_status = 'present'
+                    AND m.address_type = s.address_type AND m.address = s.address)
+       OR left(btrim(s.callsign), 3) IN (SELECT code FROM military_operator_codes))
+"""
+
+
+class CallwordWorker:
+    """Look up tactical callwords of military aircraft in War Watch Intel.
+
+    Runs every 15 minutes, only for callsigns of aircraft already flagged as
+    military. Results are cached (found: 30 days, not found: 7 days), at most
+    ``max_lookups`` requests run per cycle, spaced ``pause_seconds`` apart.
+    """
+
+    interval_seconds = 15 * 60
+
+    def __init__(self, *, storage_factory: Callable[[], Any] = PostgresStorage.from_env,
+                 fetch: Callable[[str], tuple] = military.fetch_wwi_family,
+                 lookback_days: int = 14, max_lookups: int = 10, pause_seconds: float = 5,
+                 sleep: Callable[[float], None] = time.sleep, emit: Callable[[str], None] = print):
+        self.storage_factory = storage_factory
+        self.fetch = fetch
+        self.lookback_days = lookback_days
+        self.max_lookups = max_lookups
+        self.pause_seconds = pause_seconds
+        self.sleep = sleep
+        self.emit = emit
+
+    def process_once(self) -> dict[str, Any]:
+        storage = self.storage_factory()
+        try:
+            cursor = storage.connection.cursor()
+            try:
+                cursor.execute("SELECT code FROM military_operator_codes")
+                codes = {row[0] for row in cursor.fetchall()}
+                cursor.execute(MILITARY_CALLSIGNS_SQL, {"days": self.lookback_days})
+                callsigns = [row[0] for row in cursor.fetchall()]
+                cursor.execute(
+                    "SELECT word FROM callword_lookups WHERE "
+                    "(status = 'found' AND fetched_at > now() - interval '30 days') OR "
+                    "(status = 'not_found' AND fetched_at > now() - interval '7 days')")
+                fresh = {row[0] for row in cursor.fetchall()}
+            finally:
+                cursor.close()
+            words = sorted({w for w in (military.callword(c, codes) for c in callsigns) if w} - fresh)
+            done = []
+            for index, word in enumerate(words[:self.max_lookups]):
+                if index:
+                    self.sleep(self.pause_seconds)
+                url, family = self.fetch(word)
+                storage.save_callword_lookup(word, "found" if family else "not_found", url, family)
+                done.append(word)
+            summary = {"source": "callwords", "looked_up": done,
+                       "pending": max(0, len(words) - len(done))}
+            if done:
+                self.emit(json.dumps(summary, separators=(",", ":")))
+            return summary
+        finally:
+            close = getattr(getattr(storage, "connection", None), "close", None)
+            if callable(close):
+                close()
+
+
+class TypeImageWorker:
+    """Resolve one Wikipedia article/photo per aircraft type seen recently.
+
+    Runs every 30 minutes; at most ``max_types`` types per cycle, spaced
+    ``pause_seconds`` apart, cached (found: 30 days, not found: 7 days). An
+    HTTP 429 from Wikipedia ends the cycle early.
+    """
+
+    interval_seconds = 30 * 60
+
+    def __init__(self, *, storage_factory: Callable[[], Any] = PostgresStorage.from_env,
+                 fetch_designators: Callable[[], dict] = wikipedia.fetch_designator_list,
+                 resolve: Callable[..., tuple] = wikipedia.resolve,
+                 lookback_days: int = 30, max_types: int = 15, pause_seconds: float = 3,
+                 sleep: Callable[[float], None] = time.sleep, emit: Callable[[str], None] = print):
+        self.storage_factory = storage_factory
+        self.fetch_designators = fetch_designators
+        self.resolve = resolve
+        self.lookback_days = lookback_days
+        self.max_types = max_types
+        self.pause_seconds = pause_seconds
+        self.sleep = sleep
+        self.emit = emit
+        self._designators: dict[str, str] | None = None
+        self._designators_at = 0.0
+
+    def designators(self) -> dict[str, str]:
+        if self._designators is None or time.monotonic() - self._designators_at > DAILY_SECONDS:
+            self._designators = self.fetch_designators()
+            self._designators_at = time.monotonic()
+        return self._designators
+
+    def process_once(self) -> dict[str, Any]:
+        storage = self.storage_factory()
+        try:
+            cursor = storage.connection.cursor()
+            try:
+                since = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
+                cursor.execute(aircraft_log.SUMMARY_SQL, {"since": since})
+                rows = aircraft_log.summarize(cursor.fetchall(), {})
+                cursor.execute(
+                    "SELECT designator FROM aircraft_type_images WHERE "
+                    "(status = 'found' AND fetched_at > now() - interval '30 days') OR "
+                    "(status = 'not_found' AND fetched_at > now() - interval '7 days')")
+                fresh = {row[0] for row in cursor.fetchall()}
+            finally:
+                cursor.close()
+            counts: dict[str, int] = {}
+            names: dict[str, str] = {}
+            military_types: set[str] = set()
+            for row in rows:
+                tc = row["tc"]
+                if tc and re.fullmatch(r"[A-Z0-9]{2,4}", tc) and tc not in fresh:
+                    counts[tc] = counts.get(tc, 0) + 1
+                    names.setdefault(tc, row["model"])
+                    if row.get("kind") == "Military":
+                        military_types.add(tc)
+            # Military types first (rare, and the ones worth a look), then busiest.
+            pending = sorted(counts, key=lambda tc: (tc not in military_types, -counts[tc], tc))
+            done = []
+            for index, tc in enumerate(pending[:self.max_types]):
+                if index:
+                    self.sleep(self.pause_seconds)
+                try:
+                    method, result = self.resolve(tc, names[tc], self.designators())
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 429:
+                        break
+                    raise
+                storage.save_type_image(tc, names[tc], method, result)
+                done.append(tc)
+            summary = {"source": "type_images", "resolved": done,
+                       "pending": max(0, len(pending) - len(done))}
+            if done:
+                self.emit(json.dumps(summary, separators=(",", ":")))
+            return summary
+        finally:
+            close = getattr(getattr(storage, "connection", None), "close", None)
+            if callable(close):
+                close()
+
+
 def run_forever(
     worker: Any,
     *,
@@ -178,35 +394,39 @@ def run_forever(
     retry_seconds: float = 5,
     max_retry_seconds: float = 300,
     sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Retry failures with bounded exponential backoff; import daily on success.
+    """Run each worker on its own schedule, retrying failures with backoff.
 
-    ``worker`` may be one worker or a list; each source is attempted every
-    cycle, and one source failing never skips the others.
+    ``worker`` may be one worker or a list. A worker's ``interval_seconds``
+    (default daily) sets its cadence; one source failing never delays others.
     """
     workers = list(worker) if isinstance(worker, (list, tuple)) else [worker]
-    delay = retry_seconds
-    pending = list(workers)
+    if once:
+        for item in workers:
+            item.process_once()
+        return
+
+    def interval(item: Any) -> float:
+        value = getattr(item, "interval_seconds", DAILY_SECONDS)
+        return float(value) if isinstance(value, (int, float)) else DAILY_SECONDS
+
+    due = {id(item): clock() for item in workers}
+    delay = {id(item): retry_seconds for item in workers}
     while True:
-        failed = []
-        for item in pending:
+        for item in workers:
+            if clock() < due[id(item)]:
+                continue
             try:
                 item.process_once()
             except Exception as exc:
                 print(f"{type(item).__name__} attempt failed: {exc}", file=sys.stderr, flush=True)
-                if once:
-                    raise
-                failed.append(item)
-        if once:
-            return
-        if failed:
-            pending = failed
-            sleep(delay)
-            delay = min(max_retry_seconds, max(retry_seconds, delay * 2))
-            continue
-        delay = retry_seconds
-        pending = list(workers)
-        sleep(DAILY_SECONDS)
+                due[id(item)] = clock() + delay[id(item)]
+                delay[id(item)] = min(max_retry_seconds, max(retry_seconds, delay[id(item)] * 2))
+                continue
+            delay[id(item)] = retry_seconds
+            due[id(item)] = clock() + interval(item)
+        sleep(max(1.0, min(due.values()) - clock()))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,6 +438,10 @@ def main(argv: list[str] | None = None) -> int:
         workers: list[Any] = [EnrichmentWorker(min_records=min_records)]
         if os.environ.get("OPENSKY_ENABLED", "1") != "0":
             workers.append(OpenSkyWorker())
+        if os.environ.get("MILITARY_ENABLED", "1") != "0":
+            workers += [MilitaryReferenceWorker(), CallwordWorker()]
+        if os.environ.get("TYPE_IMAGES_ENABLED", "1") != "0":
+            workers.append(TypeImageWorker())
         run_forever(workers, once=args.once)
     except Exception as exc:
         print(f"FAA enrichment worker stopped: {exc}", file=sys.stderr, flush=True)

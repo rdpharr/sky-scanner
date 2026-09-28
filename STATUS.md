@@ -106,6 +106,27 @@ re-queried the database and showed 578 aircraft, with dated first and last
 seen times. The explorer role needed a new pg_hba rule for the Docker network,
 applied to the live database and added to `docker/init-db.sh`.
 
+### 10. Military identification (2026-09-28)
+
+Of 1,516 aircraft logged, 8 were identified as military:
+
+| Address | Identification |
+| --- | --- |
+| AE07FA, AE080F | USAF C-17A |
+| AE4D98 | US Navy E-2D |
+| AE5BA8 (STLJW21) | US Navy E-2 Hawkeye |
+| AE621A | US Army UH-60M |
+| AE26B7 (C6597) | US Coast Guard AS-365 Dauphin |
+| AE6488 (TALON95) | H-60, not on any public airframe list |
+| C2B3C3 | Royal Canadian Air Force CC-150 |
+
+War Watch Intel callword lookups:
+- STLJW: all 3 recorded airframes were E-2s, matching this aircraft.
+- TALON: 27 of 77 recorded airframes were H-60s, consistent with this aircraft
+  but not identifying it.
+
+No military operator-code callsign (RCH, CNV, ...) has been received yet.
+
 ## 978 MHz (UAT): first live reception at 19:27 UTC
 
 The unattended pipeline decoded **17 UAT messages** in the 978 MHz turn at

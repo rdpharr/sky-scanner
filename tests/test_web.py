@@ -225,15 +225,65 @@ class AircraftLogAircraftTests(unittest.TestCase):
         sighting_row = (start, end, 3, 30, [1_090_000_000], ["UAL123"], ["1200"],
                         30000, 35000, 450, 3, False)
         cursor = SequencedCursor(
-            fetchall_results=[[sighting_row], []],
+            # sightings, metadata, military operator codes, callword lookups
+            fetchall_results=[[sighting_row], [], [], []],
             fetchone_results=[None],
         )
         log = self._make_log(cursor)
         result = log.aircraft("icao", "A5BD0B")
+        self.assertIsNone(result["military"])
         self.assertEqual(result["address"], "A5BD0B")
         self.assertEqual(result["address_type"], "icao")
         self.assertEqual(result["sighting_gap_minutes"], web.aircraft_log.SIGHTING_GAP_MINUTES)
         self.assertEqual(result["totals"]["sightings"], 1)
+
+    def test_type_image_none_when_identity_tc_empty_and_no_extra_query(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc)
+        sighting_row = (start, end, 3, 30, [1_090_000_000], ["UAL123"], ["1200"],
+                        30000, 35000, 450, 3, False)
+        cursor = SequencedCursor(
+            # sightings, metadata (empty -> no identity tc), military codes, callword lookups
+            fetchall_results=[[sighting_row], [], [], []],
+            fetchone_results=[None],
+        )
+        log = self._make_log(cursor)
+        result = log.aircraft("icao", "A5BD0B")
+        self.assertEqual(result["identity"]["tc"], "")
+        self.assertIsNone(result["type_image"])
+        # No aircraft_type_images lookup should have run since tc is empty.
+        # (sightings, metadata, latest snapshot, military codes, callword lookups)
+        self.assertEqual(len(cursor.executed), 5)
+        self.assertFalse(any("aircraft_type_images" in (sql or "") for sql, _ in cursor.executed))
+
+    def test_type_image_present_when_tc_resolved(self):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc)
+        sighting_row = (start, end, 3, 30, [1_090_000_000], ["UAL123"], ["1200"],
+                        30000, 35000, 450, 3, False)
+        # OpenSky metadata row supplying icao_type_code -> identity tc = "B738".
+        opensky_row = ("opensky", "present", None, None, "Boeing 737-800", None, "B738",
+                      None, None, None, None, None,
+                      datetime(2024, 1, 1, tzinfo=timezone.utc), None, None, None)
+        fetched_at = datetime(2024, 2, 1, tzinfo=timezone.utc)
+        image_row = ("Boeing 737-800", "Narrow-body airliner",
+                    "https://en.wikipedia.org/wiki/Boeing_737_Next_Generation",
+                    "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/X.jpg/330px-X.jpg",
+                    "https://commons.wikimedia.org/wiki/File:X.jpg", "designator_list", fetched_at)
+        cursor = SequencedCursor(
+            # sightings, metadata, military codes, callword lookups
+            fetchall_results=[[sighting_row], [opensky_row], [], []],
+            fetchone_results=[None, image_row],
+        )
+        log = self._make_log(cursor)
+        result = log.aircraft("icao", "A5BD0B")
+        self.assertEqual(result["identity"]["tc"], "B738")
+        self.assertIsNotNone(result["type_image"])
+        self.assertEqual(result["type_image"]["title"], "Boeing 737-800")
+        self.assertEqual(result["type_image"]["method"], "designator_list")
+        self.assertEqual(result["type_image"]["fetched_at"], fetched_at.isoformat())
+        image_calls = [sql for sql, _ in cursor.executed if "aircraft_type_images" in (sql or "")]
+        self.assertEqual(len(image_calls), 1)
 
 
 class AircraftLogSnapshotsTests(unittest.TestCase):
@@ -403,6 +453,10 @@ class MakeHandlerTests(unittest.TestCase):
         self.assertIn("text/html", resp.getheader("Content-Type"))
         self.assertIn(b"Sky Scanner Aircraft Log", body)
         self.assertEqual(resp.getheader("Cache-Control"), "no-store")
+        csp = resp.getheader("Content-Security-Policy")
+        self.assertIn("img-src", csp)
+        self.assertIn("https://upload.wikimedia.org", csp)
+        self.assertIn("https://thumb.wikimedia.org", csp)
         conn.close()
 
     def test_api_aircraft_returns_json(self):

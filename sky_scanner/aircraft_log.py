@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime
 from typing import Any, Iterable
 
+from . import military
+
 DOC8643_URL = "https://s3.opensky-network.org/data-samples/metadata/doc8643AircraftTypes.csv"
 
 SUMMARY_SQL = """
@@ -33,7 +35,8 @@ SELECT a.address, a.address_type, a.first_seen, a.last_seen, a.bands, a.snapshot
        a.messages, a.max_alt, a.callsign,
        f.registration, f.manufacturer, f.model, f.registered_owner,
        o.registration, o.model, o.icao_type_code, o.operator, o.operator_icao,
-       o.registered_owner, o.country
+       o.registered_owner, o.country,
+       p.operator, p.model, p.icao_type_code, p.category, p.tags, p.registration, mc.name
 FROM a
 LEFT JOIN LATERAL (
     SELECT * FROM aircraft_metadata m
@@ -47,6 +50,14 @@ LEFT JOIN LATERAL (
       AND m.address_type = a.address_type AND m.address = a.address
     ORDER BY m.retrieved_at DESC, m.id DESC LIMIT 1
 ) o ON true
+LEFT JOIN LATERAL (
+    SELECT * FROM aircraft_metadata m
+    WHERE m.source_name = 'plane_alert_mil'
+      AND m.address_type = a.address_type AND m.address = a.address
+    ORDER BY m.retrieved_at DESC, m.id DESC LIMIT 1
+) p ON p.registry_status = 'present'
+LEFT JOIN military_operator_codes mc
+    ON a.callsign ~ '^[A-Z]{3}[0-9]' AND mc.code = left(a.callsign, 3)
 ORDER BY a.first_seen
 """
 
@@ -192,8 +203,22 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
+def military_evidence(address: str, plane_alert: dict | None,
+                      operator_code_name: str | None) -> list[str]:
+    """Why an aircraft counts as military (empty list: not military)."""
+    evidence = []
+    if address.upper().startswith(("AE", "AF")):
+        evidence.append("US military ICAO address block")
+    if plane_alert:
+        evidence.append("plane-alert-db military list")
+    if operator_code_name:
+        evidence.append(f"military operator code ({operator_code_name})")
+    return evidence
+
+
 def identify(address: str, callsign: str | None, faa: dict | None, opensky: dict | None,
-             types: dict[str, dict[str, str]]) -> dict[str, Any]:
+             types: dict[str, dict[str, str]], plane_alert: dict | None = None,
+             operator_code_name: str | None = None) -> dict[str, Any]:
     """Resolve display identity from FAA (preferred) and OpenSky metadata dicts.
 
     Each metadata dict may hold registration, manufacturer, model,
@@ -205,24 +230,35 @@ def identify(address: str, callsign: str | None, faa: dict | None, opensky: dict
     faa_desc = " ".join(part for part in (faa.get("manufacturer"), faa_model) if part)
     os_reg, os_model, os_type = (opensky.get("registration"), opensky.get("model"),
                                  opensky.get("icao_type_code"))
+    plane_alert = {k: (military._clean(v) if isinstance(v, str) else v)
+                   for k, v in (plane_alert or {}).items()}
     # The FAA model wins over OpenSky's type code when they disagree.
-    designator = (faa_type(faa_model) if faa_reg else None) or os_type
+    designator = ((faa_type(faa_model) if faa_reg else None) or os_type
+                  or plane_alert.get("icao_type_code"))
     source = "F" if faa_reg else ("O" if (os_reg or os_model or os_type) else "-")
     owner = faa.get("registered_owner") or opensky.get("registered_owner") or ""
     operator = opensky.get("operator") or opensky.get("operator_icao") or ""
     cls = aircraft_class(designator, types)
-    mil = address.upper().startswith(("AE", "AF")) or designator == "H60"
-    airline = bool(
+    evidence = military_evidence(address, plane_alert or None, operator_code_name)
+    service = military.us_callsign_service(address, callsign) if evidence else None
+    if service:
+        evidence.append(f"callsign convention ({service})")
+    if evidence:
+        operator = plane_alert.get("operator") or operator_code_name or service or operator
+    airline = bool(not evidence and (
         AIRLINE_CALLSIGN.match(callsign or "")
         or AIRLINE_NAME.search(f"{owner} {operator}")
         or (cls in ("Narrow-body / regional jet", "Wide-body jet")
-            and (LESSOR.search(owner) or not owner)))
+            and (LESSOR.search(owner) or not owner))))
     return {
-        "reg": faa_reg or os_reg or "", "tc": designator or "",
-        "model": type_name(designator, types, faa_desc or os_model or ""),
+        "reg": faa_reg or os_reg or plane_alert.get("registration") or "", "tc": designator or "",
+        # For military airframes plane-alert-db's type name is more specific.
+        "model": ((plane_alert.get("model") if evidence else None)
+                  or type_name(designator, types, faa_desc or os_model or plane_alert.get("model") or "")),
         "acft": faa_desc or os_model or "", "op": operator, "owner": owner,
         "country": opensky.get("country") or "", "src": source, "class": cls,
-        "kind": "Military" if mil else ("Airline" if airline else "Other"),
+        "kind": "Military" if evidence else ("Airline" if airline else "Other"),
+        "military_evidence": evidence,
     }
 
 
@@ -231,7 +267,12 @@ def summarize(rows: Iterable[tuple], types: dict[str, dict[str, str]]) -> list[d
     result = []
     for (address, address_type, first_seen, last_seen, bands, snapshots, messages, max_alt,
          callsign, faa_reg, faa_mfr, faa_model, faa_owner, os_reg, os_model, os_type,
-         os_operator, os_operator_icao, os_owner, os_country) in rows:
+         os_operator, os_operator_icao, os_owner, os_country, *military_columns) in rows:
+        (pa_operator, pa_model, pa_type, pa_category, pa_tags, pa_reg,
+         operator_code_name) = (list(military_columns) + [None] * 7)[:7]
+        plane_alert = ({"operator": pa_operator, "model": pa_model, "icao_type_code": pa_type,
+                        "category": pa_category, "tags": pa_tags, "registration": pa_reg}
+                       if any((pa_operator, pa_model, pa_type, pa_reg)) else None)
         record = {
             "icao": address, "address_type": address_type,
             "first": _iso(first_seen), "last": _iso(last_seen),
@@ -246,7 +287,7 @@ def summarize(rows: Iterable[tuple], types: dict[str, dict[str, str]]) -> list[d
             {"registration": os_reg, "model": os_model, "icao_type_code": os_type,
              "operator": os_operator, "operator_icao": os_operator_icao,
              "registered_owner": os_owner, "country": os_country},
-            types))
+            types, plane_alert, operator_code_name))
         result.append(record)
     return result
 
@@ -258,7 +299,7 @@ SIGHTING_GAP_MINUTES = 10
 METADATA_SQL = """
 SELECT source_name, registry_status, registration, manufacturer, model, aircraft_type,
        icao_type_code, registered_owner, operator, operator_icao, country,
-       source_url, retrieved_at, dataset_hash
+       source_url, retrieved_at, dataset_hash, category, tags
 FROM aircraft_metadata
 WHERE address_type = %(address_type)s AND address = %(address)s
 ORDER BY source_name, retrieved_at DESC, id DESC
@@ -306,7 +347,8 @@ ORDER BY bucket_start DESC, frequency_hz LIMIT 1
 
 _METADATA_KEYS = ("source_name", "registry_status", "registration", "manufacturer", "model",
                   "aircraft_type", "icao_type_code", "registered_owner", "operator",
-                  "operator_icao", "country", "source_url", "retrieved_at", "dataset_hash")
+                  "operator_icao", "country", "source_url", "retrieved_at", "dataset_hash",
+                  "category", "tags")
 
 
 def _bands(values) -> list[int]:
@@ -317,7 +359,9 @@ def _num(value: Any) -> Any:
     return float(value) if value is not None and not isinstance(value, (int, float, bool, str)) else value
 
 
-def detail(address: str, metadata_rows, sighting_rows, latest_row, types) -> dict[str, Any]:
+def detail(address: str, metadata_rows, sighting_rows, latest_row, types,
+           operator_codes: dict[str, str] | None = None,
+           callword_rows: Iterable[tuple] = ()) -> dict[str, Any]:
     """Build the aircraft detail payload; returns an empty dict when never seen."""
     if not sighting_rows:
         return {}
@@ -341,8 +385,30 @@ def detail(address: str, metadata_rows, sighting_rows, latest_row, types) -> dic
     } for (start, end, snapshots, messages, bands, callsigns, squawks, alt_min, alt_max,
            gs_max, positions, on_ground) in sighting_rows]
     callsign = next((c for s in sightings for c in s["callsigns"]), None)
+    all_callsigns = sorted({c for s in sightings for c in s["callsigns"]})
+    operator_codes = operator_codes or {}
+    code_matches = [{"callsign": c, "code": c[:3], "name": operator_codes[c[:3]]}
+                    for c in all_callsigns if re.match(r"^[A-Z]{3}[0-9]", c) and c[:3] in operator_codes]
+    plane_alert = latest("plane_alert_mil")
+    if plane_alert:
+        plane_alert = {k: (military._clean(v) if isinstance(v, str) else v) for k, v in plane_alert.items()}
+    identity = identify(address, callsign, latest("faa_registry"), latest("opensky"), types,
+                        plane_alert, code_matches[0]["name"] if code_matches else None)
+    military_info = None
+    if identity["military_evidence"]:
+        lookups = []
+        for word, status, url, fetched_at, data in callword_rows:
+            match = None
+            if data and identity["tc"]:
+                match = next((t for t in data.get("types", []) if t["name"] == identity["tc"]), None)
+            lookups.append({"word": word, "status": status, "url": url, "fetched_at": _iso(fetched_at),
+                            "data": data, "type_match": match,
+                            "callsigns": [c for c in all_callsigns if c.startswith(word)]})
+        military_info = {"evidence": identity["military_evidence"], "plane_alert": plane_alert,
+                         "operator_codes": code_matches, "callwords": lookups}
     return {
-        "identity": identify(address, callsign, latest("faa_registry"), latest("opensky"), types),
+        "identity": identity,
+        "military": military_info,
         "first": sightings[-1]["start"], "last": sightings[0]["end"],
         "totals": {
             "sightings": len(sightings),

@@ -110,6 +110,8 @@ ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS source_name text
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS icao_type_code text;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS operator_icao text;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS country text;
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS category text;
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS tags text;
 CREATE INDEX IF NOT EXISTS aircraft_metadata_source_lookup_idx
     ON aircraft_metadata (source_name, address_type, address, retrieved_at DESC);
 CREATE INDEX IF NOT EXISTS aircraft_metadata_lookup_idx
@@ -184,6 +186,39 @@ LEFT JOIN LATERAL (
     ORDER BY o.retrieved_at DESC, o.id DESC
     LIMIT 1
 ) AS o ON true;
+
+-- Military identification (military aircraft only). Current reference set of
+-- military ICAO operator codes; provenance is recorded in enrichment_imports.
+CREATE TABLE IF NOT EXISTS military_operator_codes (
+    code text PRIMARY KEY CHECK (code ~ '^[A-Z]{3}$'),
+    name text NOT NULL,
+    import_id uuid REFERENCES enrichment_imports(id)
+);
+
+-- Cached War Watch Intel callsign-family lookups for callwords used by
+-- aircraft already identified as military.
+CREATE TABLE IF NOT EXISTS callword_lookups (
+    word text PRIMARY KEY CHECK (word ~ '^[A-Z]{3,}$'),
+    status text NOT NULL CHECK (status IN ('found', 'not_found')),
+    source_url text NOT NULL,
+    fetched_at timestamptz NOT NULL,
+    data jsonb
+);
+
+-- One representative Wikipedia article/photo per ICAO aircraft type designator.
+-- The image is a hotlink to a Wikimedia Commons file, not stored here.
+CREATE TABLE IF NOT EXISTS aircraft_type_images (
+    designator text PRIMARY KEY CHECK (designator ~ '^[A-Z0-9]{2,4}$'),
+    model_name text,
+    status text NOT NULL CHECK (status IN ('found', 'not_found')),
+    method text,
+    title text,
+    description text,
+    article_url text,
+    image_url text,
+    file_url text,
+    fetched_at timestamptz NOT NULL
+);
 
 -- Default privileges only cover objects created after they were set; grant
 -- explicitly so the read-only exploration role always sees every table/view.

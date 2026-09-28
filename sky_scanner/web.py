@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import aircraft_log
+from . import aircraft_log, military
 
 LOG = logging.getLogger(__name__)
 PAGE = Path(__file__).with_name("aircraft_log.html")
@@ -90,7 +90,27 @@ class AircraftLog:
             metadata = cursor.fetchall()
             cursor.execute(aircraft_log.LATEST_SNAPSHOT_SQL, params)
             latest = cursor.fetchone()
-        payload = aircraft_log.detail(address, metadata, sightings, latest, self.types())
+            cursor.execute("SELECT code, name FROM military_operator_codes")
+            codes = dict(cursor.fetchall())
+            words = sorted({w for row in sightings for c in (row[5] or [])
+                            if (w := military.callword(c, set(codes)))})
+            cursor.execute("SELECT word, status, source_url, fetched_at, data FROM callword_lookups "
+                           "WHERE word = ANY(%(words)s) ORDER BY word", {"words": words})
+            callwords = cursor.fetchall()
+            payload = aircraft_log.detail(address, metadata, sightings, latest, self.types(),
+                                          codes, callwords)
+            payload["type_image"] = None
+            if payload["identity"]["tc"]:
+                cursor.execute(
+                    "SELECT title, description, article_url, image_url, file_url, method, fetched_at "
+                    "FROM aircraft_type_images WHERE designator = %(tc)s AND status = 'found'",
+                    {"tc": payload["identity"]["tc"]})
+                image = cursor.fetchone()
+                if image:
+                    keys = ("title", "description", "article_url", "image_url", "file_url",
+                            "method", "fetched_at")
+                    payload["type_image"] = dict(zip(keys, image))
+                    payload["type_image"]["fetched_at"] = aircraft_log._iso(image[6])
         payload.update(address=address, address_type=address_type,
                        sighting_gap_minutes=aircraft_log.SIGHTING_GAP_MINUTES)
         return payload
@@ -154,7 +174,8 @@ def make_handler(log: AircraftLog):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                             "font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'")
+                             "font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; "
+                             "img-src 'self' https://upload.wikimedia.org https://thumb.wikimedia.org")
             self.end_headers()
             self.wfile.write(body)
 

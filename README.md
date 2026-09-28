@@ -72,6 +72,46 @@ their timestamps never advance unless received again. Null typed columns mean
 the value was unknown or expired. Different frequency observations remain
 separate. Rebroadcast reception frequency is not the original transmitter band.
 
+## Military aircraft identification
+
+The enrichment worker identifies military aircraft and decodes only those.
+Detection runs locally against every aircraft, with no per-aircraft network
+calls. An aircraft counts as military when any of these holds:
+
+- its ICAO address is in the US military block (AE0000–AFFFFF);
+- it is on the [plane-alert-db](https://github.com/sdr-enthusiasts/plane-alert-db)
+  military list (ODbL, refreshed daily), which gives operator, type, serial
+  and tags;
+- its callsign starts with a military ICAO operator code (for example RCH →
+  Air Mobility Command), from [VRS standing data](https://github.com/vradarserver/standing-data)
+  (CC0, refreshed daily);
+- it uses a US Coast Guard style callsign (C + tail number) from a
+  US-military address.
+
+For military aircraft only, tactical callwords (TALON95 → TALON) are looked
+up in the [War Watch Intel](https://www.warwatchintel.com/codex) callsign
+codex. Lookups run every 15 minutes, at most 10 per cycle, 5 s apart, and
+are cached: 30 days when found, 7 days when not found. The result lists which
+aircraft types and countries recently used the callword, and whether this
+aircraft's type is among them. Callwords are shared across units, so this is
+supporting evidence, not a unit identification.
+
+Results appear in the aircraft log's Military filter and in a "Military
+identification" panel on each military aircraft's detail view. Set
+`MILITARY_ENABLED=0` to disable it. Reference data lives in the
+`plane_alert_mil` metadata source, `military_operator_codes` and
+`callword_lookups`.
+
+## Aircraft type photos
+
+Every 30 minutes the enrichment worker resolves up to 15 aircraft types seen
+in the last 30 days to an English Wikipedia article. It uses Wikipedia's
+"List of aircraft type designators" first, then a search on the model name,
+accepted only when the article describes an aircraft. Results are cached in
+`aircraft_type_images` (30 days when found, 7 days when not). Only freely
+licensed Wikimedia Commons images are used. The detail page hotlinks the
+image rather than storing a copy. Set `TYPE_IMAGES_ENABLED=0` to disable it.
+
 ## Aircraft log page (LAN)
 
 The `web` service serves a read-only page at `http://<LAN IP>:8080` (port
@@ -93,7 +133,10 @@ Select any aircraft in the list to open its detail view
 - for a selected sighting, a track plot, an altitude/ground-speed profile and
   every 15-second snapshot with all its decoded fields;
 - the latest decoded fields with their reception times;
-- the full registry version history.
+- the full registry version history;
+- a representative photo of the aircraft's type from its English Wikipedia
+  article, hotlinked from Wikimedia, with links to the article and the
+  photo's credit and license page. It shows the type, not that airframe.
 
 The page uses the read-only `explorer` role over TLS. The JSON endpoints are
 `/api/aircraft?days=N`, `/api/aircraft/<type>/<address>` and

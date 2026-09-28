@@ -399,5 +399,159 @@ class SightingsAndSnapshotsSqlTests(unittest.TestCase):
         self.assertIn("%(address)s", aircraft_log.SNAPSHOTS_SQL)
 
 
+# --- military_evidence -------------------------------------------------------
+
+class MilitaryEvidenceTests(unittest.TestCase):
+    def test_ae_address_gives_us_block_evidence(self):
+        evidence = aircraft_log.military_evidence("AE1234", None, None)
+        self.assertIn("US military ICAO address block", evidence)
+
+    def test_af_address_gives_us_block_evidence(self):
+        evidence = aircraft_log.military_evidence("AF1234", None, None)
+        self.assertIn("US military ICAO address block", evidence)
+
+    def test_non_military_address_and_no_other_signal_is_empty(self):
+        self.assertEqual(aircraft_log.military_evidence("A01234", None, None), [])
+
+    def test_plane_alert_gives_evidence(self):
+        evidence = aircraft_log.military_evidence("A01234", {"operator": "US Air Force"}, None)
+        self.assertIn("plane-alert-db military list", evidence)
+
+    def test_operator_code_name_gives_evidence(self):
+        evidence = aircraft_log.military_evidence("A01234", None, "Air Mobility Command")
+        self.assertIn("military operator code (Air Mobility Command)", evidence)
+
+
+# --- identify: military ------------------------------------------------------
+
+class MilitaryIdentifyTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_plane_alert_sets_operator_and_model_and_evidence(self):
+        plane_alert = {"operator": "United States Navy", "model": "P-8A Poseidon",
+                       "icao_type_code": "P8"}
+        result = aircraft_log.identify("A01234", None, None, None, self.types,
+                                       plane_alert=plane_alert)
+        self.assertIn("plane-alert-db military list", result["military_evidence"])
+        self.assertEqual(result["op"], "United States Navy")
+        self.assertEqual(result["model"], "P-8A Poseidon")
+        self.assertEqual(result["kind"], "Military")
+
+    def test_operator_code_name_evidence_and_operator(self):
+        result = aircraft_log.identify("A01234", "RCH123", None, None, self.types,
+                                       operator_code_name="Air Mobility Command")
+        self.assertIn("military operator code (Air Mobility Command)", result["military_evidence"])
+        self.assertEqual(result["op"], "Air Mobility Command")
+        self.assertEqual(result["kind"], "Military")
+
+    def test_military_is_never_classified_airline_despite_airline_callsign(self):
+        result = aircraft_log.identify("AE1234", "AAL1", None, None, self.types)
+        self.assertEqual(result["kind"], "Military")
+
+    def test_non_military_civil_aircraft_has_empty_evidence(self):
+        result = aircraft_log.identify("A01234", "N12345", None, None, self.types)
+        self.assertEqual(result["military_evidence"], [])
+        self.assertNotEqual(result["kind"], "Military")
+
+    def test_coast_guard_callsign_on_us_military_address_adds_evidence(self):
+        result = aircraft_log.identify("AE26B7", "C6597", None, None, self.types)
+        self.assertIn("callsign convention (US Coast Guard (aircraft number))",
+                      result["military_evidence"])
+
+
+# --- detail: military ---------------------------------------------------------
+
+def _full_metadata_row(source_name, registry_status, registration="", manufacturer="", model="",
+                       aircraft_type="", icao_type_code="", registered_owner="", operator="",
+                       operator_icao="", country="", source_url="", retrieved_at=None,
+                       dataset_hash="hash", category="", tags=""):
+    retrieved_at = retrieved_at or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    return (source_name, registry_status, registration, manufacturer, model, aircraft_type,
+            icao_type_code, registered_owner, operator, operator_icao, country, source_url,
+            retrieved_at, dataset_hash, category, tags)
+
+
+class MilitaryDetailTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+        self.rch_sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+            callsigns=("RCH123",),
+        )]
+
+    def test_plane_alert_populated_and_placeholder_values_cleaned(self):
+        metadata_rows = [_full_metadata_row(
+            "plane_alert_mil", "present", registration="????", operator="US Air Force",
+            model="C-17A", icao_type_code="C17", category="Military", tags="Cargo",
+        )]
+        result = aircraft_log.detail("AE1234", metadata_rows, self.rch_sighting_rows, None, self.types)
+        pa = result["military"]["plane_alert"]
+        self.assertIsNone(pa["registration"])
+        self.assertEqual(pa["operator"], "US Air Force")
+        self.assertEqual(pa["model"], "C-17A")
+
+    def test_operator_codes_match_from_callsign(self):
+        result = aircraft_log.detail("A01234", [], self.rch_sighting_rows, None, self.types,
+                                     operator_codes={"RCH": "Air Mobility Command"})
+        self.assertEqual(result["military"]["operator_codes"], [
+            {"callsign": "RCH123", "code": "RCH", "name": "Air Mobility Command"},
+        ])
+
+    def test_callword_type_match_against_opensky_type(self):
+        metadata_rows = [_full_metadata_row("opensky", "present", icao_type_code="H60")]
+        talon_sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+            callsigns=("RCH123", "TALON11"),
+        )]
+        callword_rows = [(
+            "TALON", "found", "https://wwi/TALON", datetime(2024, 1, 1, tzinfo=timezone.utc),
+            {"types": [{"name": "H60", "count": 27}]},
+        )]
+        result = aircraft_log.detail("A01234", metadata_rows, talon_sighting_rows, None, self.types,
+                                     operator_codes={"RCH": "Air Mobility Command"},
+                                     callword_rows=callword_rows)
+        lookups = result["military"]["callwords"]
+        self.assertEqual(lookups[0]["type_match"], {"name": "H60", "count": 27})
+        self.assertEqual(lookups[0]["callsigns"], ["TALON11"])
+
+    def test_civil_aircraft_has_no_military_section(self):
+        result = aircraft_log.detail("A01234", [], self.rch_sighting_rows, None, self.types)
+        self.assertIsNone(result["military"])
+
+
+# --- summarize: military columns ---------------------------------------------
+
+def _row_with_military(pa_operator=None, pa_model=None, pa_type=None, pa_category=None,
+                       pa_tags=None, pa_reg=None, operator_code_name=None, **kwargs):
+    return _row(**kwargs) + (pa_operator, pa_model, pa_type, pa_category, pa_tags, pa_reg,
+                             operator_code_name)
+
+
+class SummarizeMilitaryColumnsTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_still_accepts_old_20_column_rows(self):
+        result = aircraft_log.summarize([_row()], self.types)[0]
+        self.assertEqual(result["kind"], "Other")
+
+    def test_plane_alert_columns_produce_military_kind_and_fields(self):
+        row = _row_with_military(
+            address="A01234", pa_operator="US Air Force", pa_model="C-17A",
+            pa_type="C17", pa_category="Military", pa_tags="Cargo", pa_reg="12-3456",
+        )
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertEqual(result["kind"], "Military")
+        self.assertEqual(result["op"], "US Air Force")
+        self.assertEqual(result["model"], "C-17A")
+
+    def test_operator_code_name_column_produces_military_kind(self):
+        row = _row_with_military(callsign="RCH123", operator_code_name="Air Mobility Command")
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertEqual(result["kind"], "Military")
+        self.assertEqual(result["op"], "Air Mobility Command")
+
+
 if __name__ == "__main__":
     unittest.main()
