@@ -1,9 +1,12 @@
 """Read-only LAN aircraft log: one HTML page plus a JSON endpoint.
 
 Connects with the read-only ``explorer`` role (``WEB_DATABASE_URL``). Serves
-``GET /`` (the page) and ``GET /api/aircraft?days=N`` (summary JSON; omit
-``days`` for all time). Results are cached briefly so repeated refreshes do
-not rescan the snapshot table. There are no write endpoints.
+``GET /`` (the page), ``GET /api/aircraft?days=N`` (summary JSON; omit
+``days`` for all time), ``GET /api/aircraft/<type>/<address>`` (one aircraft:
+registry versions, sightings, latest decoded fields) and
+``.../snapshots?start=&end=`` (snapshots in a range of at most two days).
+Summaries are cached briefly so repeated refreshes do not rescan the
+snapshot table. There are no write endpoints.
 """
 
 from __future__ import annotations
@@ -11,13 +14,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import aircraft_log
 
@@ -75,6 +79,56 @@ class AircraftLog:
             self._cache[days] = (time.monotonic(), payload)
             return payload
 
+    def aircraft(self, address_type: str, address: str) -> dict:
+        params = {"address_type": address_type, "address": address}
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(aircraft_log.SIGHTINGS_SQL, params)
+            sightings = cursor.fetchall()
+            if not sightings:
+                return {}
+            cursor.execute(aircraft_log.METADATA_SQL, params)
+            metadata = cursor.fetchall()
+            cursor.execute(aircraft_log.LATEST_SNAPSHOT_SQL, params)
+            latest = cursor.fetchone()
+        payload = aircraft_log.detail(address, metadata, sightings, latest, self.types())
+        payload.update(address=address, address_type=address_type,
+                       sighting_gap_minutes=aircraft_log.SIGHTING_GAP_MINUTES)
+        return payload
+
+    def snapshots(self, address_type: str, address: str, start: datetime, end: datetime) -> dict:
+        params = {"address_type": address_type, "address": address, "start": start, "end": end}
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(aircraft_log.SNAPSHOTS_SQL, params)
+            rows = aircraft_log.snapshot_rows(cursor.fetchall())
+        return {"start": start.isoformat(), "end": end.isoformat(), "rows": rows,
+                "truncated": len(rows) >= 5000}
+
+
+ADDRESS_TYPE = re.compile(r"^[a-z0-9_:]{1,40}$")
+ADDRESS = re.compile(r"^[0-9A-F]{6}$")
+AIRCRAFT_PATH = re.compile(r"^/api/aircraft/([^/]+)/([^/]+)(/snapshots)?$")
+
+
+def parse_identity(address_type: str, address: str) -> tuple[str, str]:
+    address_type, address = unquote(address_type), unquote(address).upper()
+    if not ADDRESS_TYPE.match(address_type) or not ADDRESS.match(address):
+        raise ValueError("invalid aircraft identity")
+    return address_type, address
+
+
+def parse_range(query: str) -> tuple[datetime, datetime]:
+    values = parse_qs(query)
+    try:
+        start = datetime.fromisoformat(values["start"][0])
+        end = datetime.fromisoformat(values["end"][0])
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError("start and end must be ISO timestamps") from exc
+    if start.tzinfo is None or end.tzinfo is None or end < start:
+        raise ValueError("start and end must be timezone-aware with end >= start")
+    if end - start > timedelta(days=2):
+        raise ValueError("range is limited to 2 days")
+    return start, end
+
 
 def parse_days(query: str) -> int | None:
     value = parse_qs(query).get("days", [""])[0]
@@ -121,6 +175,25 @@ def make_handler(log: AircraftLog):
                     self._send(503, json.dumps({"error": "database unavailable"}).encode(), "application/json")
                     return
                 self._send(200, body, "application/json")
+            elif AIRCRAFT_PATH.match(url.path):
+                match = AIRCRAFT_PATH.match(url.path)
+                try:
+                    address_type, address = parse_identity(match.group(1), match.group(2))
+                    span = parse_range(url.query) if match.group(3) else None
+                except ValueError as exc:
+                    self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+                    return
+                try:
+                    payload = (log.snapshots(address_type, address, *span) if span
+                               else log.aircraft(address_type, address))
+                except Exception as exc:
+                    LOG.warning("aircraft detail failed: %s", exc)
+                    self._send(503, json.dumps({"error": "database unavailable"}).encode(), "application/json")
+                    return
+                if not payload:
+                    self._send(404, json.dumps({"error": "aircraft not seen"}).encode(), "application/json")
+                    return
+                self._send(200, json.dumps(payload, separators=(",", ":")).encode(), "application/json")
             elif url.path == "/healthz":
                 self._send(200, b"ok\n", "text/plain")
             else:

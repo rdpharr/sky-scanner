@@ -192,34 +192,186 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
+def identify(address: str, callsign: str | None, faa: dict | None, opensky: dict | None,
+             types: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """Resolve display identity from FAA (preferred) and OpenSky metadata dicts.
+
+    Each metadata dict may hold registration, manufacturer, model,
+    registered_owner, icao_type_code, operator, operator_icao and country.
+    """
+    faa = faa or {}
+    opensky = opensky or {}
+    faa_reg, faa_model = faa.get("registration"), faa.get("model")
+    faa_desc = " ".join(part for part in (faa.get("manufacturer"), faa_model) if part)
+    os_reg, os_model, os_type = (opensky.get("registration"), opensky.get("model"),
+                                 opensky.get("icao_type_code"))
+    # The FAA model wins over OpenSky's type code when they disagree.
+    designator = (faa_type(faa_model) if faa_reg else None) or os_type
+    source = "F" if faa_reg else ("O" if (os_reg or os_model or os_type) else "-")
+    owner = faa.get("registered_owner") or opensky.get("registered_owner") or ""
+    operator = opensky.get("operator") or opensky.get("operator_icao") or ""
+    cls = aircraft_class(designator, types)
+    mil = address.upper().startswith(("AE", "AF")) or designator == "H60"
+    airline = bool(
+        AIRLINE_CALLSIGN.match(callsign or "")
+        or AIRLINE_NAME.search(f"{owner} {operator}")
+        or (cls in ("Narrow-body / regional jet", "Wide-body jet")
+            and (LESSOR.search(owner) or not owner)))
+    return {
+        "reg": faa_reg or os_reg or "", "tc": designator or "",
+        "model": type_name(designator, types, faa_desc or os_model or ""),
+        "acft": faa_desc or os_model or "", "op": operator, "owner": owner,
+        "country": opensky.get("country") or "", "src": source, "class": cls,
+        "kind": "Military" if mil else ("Airline" if airline else "Other"),
+    }
+
+
 def summarize(rows: Iterable[tuple], types: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     """Turn SUMMARY_SQL rows into page records."""
     result = []
     for (address, address_type, first_seen, last_seen, bands, snapshots, messages, max_alt,
          callsign, faa_reg, faa_mfr, faa_model, faa_owner, os_reg, os_model, os_type,
          os_operator, os_operator_icao, os_owner, os_country) in rows:
-        faa_desc = " ".join(part for part in (faa_mfr, faa_model) if part)
-        # The FAA model wins over OpenSky's type code when they disagree.
-        designator = (faa_type(faa_model) if faa_reg else None) or os_type
-        source = "F" if faa_reg else ("O" if (os_reg or os_model or os_type) else "-")
-        owner = faa_owner or os_owner or ""
-        operator = os_operator or os_operator_icao or ""
-        cls = aircraft_class(designator, types)
-        mil = address.upper().startswith(("AE", "AF")) or designator == "H60"
-        airline = bool(
-            AIRLINE_CALLSIGN.match(callsign or "")
-            or AIRLINE_NAME.search(f"{owner} {operator}")
-            or (cls in ("Narrow-body / regional jet", "Wide-body jet")
-                and (LESSOR.search(owner) or not owner)))
-        result.append({
+        record = {
             "icao": address, "address_type": address_type,
             "first": _iso(first_seen), "last": _iso(last_seen),
             "band": ",".join(str(int(b) // 1_000_000) for b in sorted(bands or [])),
             "snapshots": snapshots, "messages": messages, "alt": max_alt,
-            "cs": callsign or "", "reg": faa_reg or os_reg or "",
-            "tc": designator or "", "model": type_name(designator, types, faa_desc or os_model or ""),
-            "acft": faa_desc or os_model or "", "op": operator, "owner": owner,
-            "country": os_country or "", "src": source, "class": cls,
-            "kind": "Military" if mil else ("Airline" if airline else "Other"),
-        })
+            "cs": callsign or "",
+        }
+        record.update(identify(
+            address, callsign,
+            {"registration": faa_reg, "manufacturer": faa_mfr, "model": faa_model,
+             "registered_owner": faa_owner},
+            {"registration": os_reg, "model": os_model, "icao_type_code": os_type,
+             "operator": os_operator, "operator_icao": os_operator_icao,
+             "registered_owner": os_owner, "country": os_country},
+            types))
+        result.append(record)
+    return result
+
+
+# --- Single-aircraft detail -------------------------------------------------
+
+SIGHTING_GAP_MINUTES = 10
+
+METADATA_SQL = """
+SELECT source_name, registry_status, registration, manufacturer, model, aircraft_type,
+       icao_type_code, registered_owner, operator, operator_icao, country,
+       source_url, retrieved_at, dataset_hash
+FROM aircraft_metadata
+WHERE address_type = %(address_type)s AND address = %(address)s
+ORDER BY source_name, retrieved_at DESC, id DESC
+"""
+
+# A sighting is a run of snapshots with no gap longer than SIGHTING_GAP_MINUTES,
+# across both bands.
+SIGHTINGS_SQL = f"""
+WITH s AS (
+    SELECT *, CASE WHEN bucket_start - lag(bucket_start) OVER (ORDER BY bucket_start, frequency_hz)
+                        > interval '{SIGHTING_GAP_MINUTES} minutes' THEN 1 ELSE 0 END AS new_run
+    FROM aircraft_snapshots
+    WHERE address_type = %(address_type)s AND address = %(address)s
+), r AS (
+    SELECT *, sum(new_run) OVER (ORDER BY bucket_start, frequency_hz) AS run FROM s
+)
+SELECT min(first_received_at), max(last_received_at), count(*), sum(message_count),
+       array_agg(DISTINCT frequency_hz),
+       array_remove(array_agg(DISTINCT nullif(btrim(callsign), '')), NULL),
+       array_remove(array_agg(DISTINCT squawk), NULL),
+       min(altitude_baro_ft), max(altitude_baro_ft), max(ground_speed_kt), count(position),
+       bool_or(on_ground)
+FROM r GROUP BY run ORDER BY min(first_received_at) DESC
+LIMIT 1000
+"""
+
+SNAPSHOTS_SQL = """
+SELECT bucket_start, frequency_hz, first_received_at, last_received_at, message_count,
+       btrim(callsign), latitude, longitude, altitude_baro_ft, altitude_geom_ft,
+       ground_speed_kt, track_deg, vertical_rate_baro_fpm, vertical_rate_geom_fpm,
+       squawk, on_ground, fields
+FROM aircraft_snapshots
+WHERE address_type = %(address_type)s AND address = %(address)s
+  AND last_received_at >= %(start)s AND first_received_at <= %(end)s
+ORDER BY bucket_start, frequency_hz
+LIMIT 5000
+"""
+
+LATEST_SNAPSHOT_SQL = """
+SELECT bucket_start, frequency_hz, fields
+FROM aircraft_snapshots
+WHERE address_type = %(address_type)s AND address = %(address)s
+ORDER BY bucket_start DESC, frequency_hz LIMIT 1
+"""
+
+_METADATA_KEYS = ("source_name", "registry_status", "registration", "manufacturer", "model",
+                  "aircraft_type", "icao_type_code", "registered_owner", "operator",
+                  "operator_icao", "country", "source_url", "retrieved_at", "dataset_hash")
+
+
+def _bands(values) -> list[int]:
+    return sorted(int(v) // 1_000_000 for v in (values or []))
+
+
+def _num(value: Any) -> Any:
+    return float(value) if value is not None and not isinstance(value, (int, float, bool, str)) else value
+
+
+def detail(address: str, metadata_rows, sighting_rows, latest_row, types) -> dict[str, Any]:
+    """Build the aircraft detail payload; returns an empty dict when never seen."""
+    if not sighting_rows:
+        return {}
+    versions = []
+    for row in metadata_rows:
+        item = dict(zip(_METADATA_KEYS, row))
+        item["retrieved_at"] = _iso(item["retrieved_at"])
+        versions.append(item)
+
+    def latest(source):
+        for item in versions:
+            if item["source_name"] == source:
+                return item if item["registry_status"] == "present" else None
+        return None
+
+    sightings = [{
+        "start": _iso(start), "end": _iso(end), "snapshots": snapshots, "messages": messages,
+        "bands": _bands(bands), "callsigns": sorted(callsigns or []), "squawks": sorted(squawks or []),
+        "alt_min": _num(alt_min), "alt_max": _num(alt_max), "gs_max": _num(gs_max),
+        "positions": positions, "on_ground": on_ground,
+    } for (start, end, snapshots, messages, bands, callsigns, squawks, alt_min, alt_max,
+           gs_max, positions, on_ground) in sighting_rows]
+    callsign = next((c for s in sightings for c in s["callsigns"]), None)
+    return {
+        "identity": identify(address, callsign, latest("faa_registry"), latest("opensky"), types),
+        "first": sightings[-1]["start"], "last": sightings[0]["end"],
+        "totals": {
+            "sightings": len(sightings),
+            "snapshots": sum(s["snapshots"] for s in sightings),
+            "messages": sum(s["messages"] or 0 for s in sightings),
+            "bands": sorted({b for s in sightings for b in s["bands"]}),
+            "alt_max": max((s["alt_max"] for s in sightings if s["alt_max"] is not None), default=None),
+            "gs_max": max((s["gs_max"] for s in sightings if s["gs_max"] is not None), default=None),
+            "callsigns": sorted({c for s in sightings for c in s["callsigns"]}),
+        },
+        "metadata": versions,
+        "sightings": sightings,
+        "latest_fields": {
+            "bucket_start": _iso(latest_row[0]), "band": int(latest_row[1]) // 1_000_000,
+            "fields": latest_row[2] or {},
+        } if latest_row else None,
+    }
+
+
+def snapshot_rows(rows) -> list[dict[str, Any]]:
+    keys = ("bucket", "band", "first", "last", "messages", "callsign", "lat", "lon", "alt_baro",
+            "alt_geom", "gs", "track", "vr_baro", "vr_geom", "squawk", "on_ground", "fields")
+    result = []
+    for row in rows:
+        item = dict(zip(keys, row))
+        for key in ("bucket", "first", "last"):
+            item[key] = _iso(item[key])
+        item["band"] = int(item["band"]) // 1_000_000
+        for key in ("lat", "lon", "alt_baro", "alt_geom", "gs", "track", "vr_baro", "vr_geom"):
+            item[key] = _num(item[key])
+        result.append(item)
     return result

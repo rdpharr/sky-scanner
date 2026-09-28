@@ -83,8 +83,22 @@ The `web` service serves a read-only page at `http://<LAN IP>:8080` (port
 - a **Refresh** button that queries the database live;
 - a time-range filter (24 h, 7 days, 30 days, all time).
 
-The page uses the read-only `explorer` role over TLS; `/api/aircraft?days=N`
-returns the same data as JSON. It has no login and uses plain HTTP, so keep
+Select any aircraft in the list to open its detail view
+(`#/aircraft/<type>/<address>`, which can be bookmarked). It shows:
+
+- FAA and OpenSky identity side by side, plus links to ADS-B Exchange,
+  FlightAware, OpenSky and the FAA record;
+- first and last seen, and every past sighting (a run of snapshots with no
+  gap over 10 minutes);
+- for a selected sighting, a track plot, an altitude/ground-speed profile and
+  every 15-second snapshot with all its decoded fields;
+- the latest decoded fields with their reception times;
+- the full registry version history.
+
+The page uses the read-only `explorer` role over TLS. The JSON endpoints are
+`/api/aircraft?days=N`, `/api/aircraft/<type>/<address>` and
+`/api/aircraft/<type>/<address>/snapshots?start=<iso>&end=<iso>` (at most
+two days per request). It has no login and uses plain HTTP, so keep
 it on the home network and never port-forward it. The first load fetches the
 ICAO Doc 8643 type list from OpenSky; without it, classes show as "Other".
 Aggregating all snapshots slows as data grows; use a shorter range if an

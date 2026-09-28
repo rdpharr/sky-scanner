@@ -1,3 +1,4 @@
+import decimal
 import unittest
 from datetime import datetime, timezone
 
@@ -211,6 +212,191 @@ class SummarySqlTests(unittest.TestCase):
 
     def test_has_since_parameter(self):
         self.assertIn("%(since)s", aircraft_log.SUMMARY_SQL)
+
+
+class IdentifyTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_faa_preferred_over_opensky(self):
+        faa = {"registration": "N123AB", "manufacturer": "BOEING", "model": "737-823",
+               "registered_owner": "SOME AIRLINE"}
+        opensky = {"registration": "D-ABCD", "model": "A320", "icao_type_code": "A320",
+                   "registered_owner": "LUFTHANSA", "operator": "Lufthansa",
+                   "operator_icao": "DLH", "country": "Germany"}
+        result = aircraft_log.identify("A1B2C3", "AAL1", faa, opensky, self.types)
+        self.assertEqual(result["src"], "F")
+        self.assertEqual(result["reg"], "N123AB")
+        self.assertEqual(result["tc"], "B738")
+
+    def test_opensky_only_gives_src_o(self):
+        opensky = {"registration": "D-ABCD", "model": "A320", "icao_type_code": "A320"}
+        result = aircraft_log.identify("A1B2C3", None, None, opensky, self.types)
+        self.assertEqual(result["src"], "O")
+        self.assertEqual(result["reg"], "D-ABCD")
+
+    def test_empty_metadata_gives_dash_and_unidentified(self):
+        result = aircraft_log.identify("A1B2C3", None, None, None, self.types)
+        self.assertEqual(result["src"], "-")
+        self.assertEqual(result["class"], "Unidentified")
+        self.assertEqual(result["reg"], "")
+
+    def test_military_by_ae_prefix(self):
+        result = aircraft_log.identify("AE1234", None, None, None, self.types)
+        self.assertEqual(result["kind"], "Military")
+
+    def test_non_military_prefix(self):
+        result = aircraft_log.identify("A01234", None, None, None, self.types)
+        self.assertNotEqual(result["kind"], "Military")
+
+
+def _sighting_row(start, end, snapshots=5, messages=50, bands=(1_090_000_000,),
+                   callsigns=("UAL123",), squawks=("1200",), alt_min=30000, alt_max=35000,
+                   gs_max=450, positions=5, on_ground=False):
+    return (start, end, snapshots, messages, list(bands), list(callsigns), list(squawks),
+            alt_min, alt_max, gs_max, positions, on_ground)
+
+
+def _metadata_row(source_name, registry_status, registration="", manufacturer="", model="",
+                   aircraft_type="", icao_type_code="", registered_owner="", operator="",
+                   operator_icao="", country="", source_url="", retrieved_at=None,
+                   dataset_hash="hash"):
+    retrieved_at = retrieved_at or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    return (source_name, registry_status, registration, manufacturer, model, aircraft_type,
+            icao_type_code, registered_owner, operator, operator_icao, country, source_url,
+            retrieved_at, dataset_hash)
+
+
+class DetailTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_returns_empty_dict_when_no_sightings(self):
+        self.assertEqual(
+            aircraft_log.detail("A1B2C3", [], [], None, self.types), {}
+        )
+
+    def test_full_detail_payload(self):
+        newest_start = datetime(2024, 6, 2, tzinfo=timezone.utc)
+        newest_end = datetime(2024, 6, 2, 1, 0, tzinfo=timezone.utc)
+        oldest_start = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        oldest_end = datetime(2024, 6, 1, 1, 0, tzinfo=timezone.utc)
+
+        # Rows come back newest-first, per SIGHTINGS_SQL's ORDER BY.
+        sighting_rows = [
+            _sighting_row(newest_start, newest_end, snapshots=5, messages=50,
+                          bands=(1_090_000_000,), callsigns=("UAL123",), squawks=("1200",),
+                          alt_min=decimal.Decimal("30000"), alt_max=decimal.Decimal("35000"),
+                          gs_max=decimal.Decimal("450"), positions=5, on_ground=False),
+            _sighting_row(oldest_start, oldest_end, snapshots=3, messages=30,
+                          bands=(978_000_000,), callsigns=(), squawks=(), alt_min=None,
+                          alt_max=None, gs_max=None, positions=0, on_ground=True),
+        ]
+        metadata_rows = [
+            # Latest FAA version is 'absent' -> the source should be ignored for identity,
+            # even though an older 'present' version exists.
+            _metadata_row("faa_registry", "absent",
+                          retrieved_at=datetime(2024, 3, 1, tzinfo=timezone.utc)),
+            _metadata_row("faa_registry", "present", registration="N123AB",
+                          manufacturer="BOEING", model="737-823",
+                          registered_owner="SOME OWNER",
+                          retrieved_at=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            _metadata_row("opensky", "present", registration="D-ABCD", model="A320",
+                          icao_type_code="A320", operator="Lufthansa",
+                          operator_icao="DLH", country="Germany",
+                          retrieved_at=datetime(2024, 2, 1, tzinfo=timezone.utc)),
+        ]
+        latest_row = (newest_end, 1_090_000_000, {"squawk": "1200"})
+
+        result = aircraft_log.detail("A1B2C3", metadata_rows, sighting_rows, latest_row,
+                                     self.types)
+
+        # first == last sighting's start (rows are newest first).
+        self.assertEqual(result["first"], oldest_start.isoformat())
+        # last == first row's end.
+        self.assertEqual(result["last"], newest_end.isoformat())
+
+        totals = result["totals"]
+        self.assertEqual(totals["sightings"], 2)
+        self.assertEqual(totals["snapshots"], 8)
+        self.assertEqual(totals["messages"], 80)
+        self.assertEqual(totals["bands"], [978, 1090])
+        self.assertEqual(totals["alt_max"], 35000.0)
+        self.assertIsInstance(totals["alt_max"], float)
+        self.assertEqual(totals["gs_max"], 450.0)
+        self.assertEqual(totals["callsigns"], ["UAL123"])
+
+        # FAA's latest version is 'absent', so identity should fall back to OpenSky.
+        identity = result["identity"]
+        self.assertEqual(identity["src"], "O")
+        self.assertEqual(identity["reg"], "D-ABCD")
+
+        # Metadata versions retain both FAA rows and the OpenSky row, ISO timestamps.
+        self.assertEqual(len(result["metadata"]), 3)
+        self.assertEqual(result["metadata"][0]["retrieved_at"],
+                         datetime(2024, 3, 1, tzinfo=timezone.utc).isoformat())
+
+        self.assertEqual(result["latest_fields"]["band"], 1090)
+        self.assertEqual(result["latest_fields"]["bucket_start"], newest_end.isoformat())
+        self.assertEqual(result["latest_fields"]["fields"], {"squawk": "1200"})
+
+    def test_ignores_source_whose_latest_version_is_absent_entirely(self):
+        sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc)
+        )]
+        metadata_rows = [_metadata_row("faa_registry", "absent")]
+        result = aircraft_log.detail("A1B2C3", metadata_rows, sighting_rows, None, self.types)
+        self.assertEqual(result["identity"]["src"], "-")
+
+    def test_latest_fields_none_without_latest_row(self):
+        sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc)
+        )]
+        result = aircraft_log.detail("A1B2C3", [], sighting_rows, None, self.types)
+        self.assertIsNone(result["latest_fields"])
+
+
+class SnapshotRowsTests(unittest.TestCase):
+    def test_converts_timestamps_band_and_decimals(self):
+        bucket = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        first = datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
+        last = datetime(2024, 1, 1, 0, 0, 30, tzinfo=timezone.utc)
+        row = (
+            bucket, 1_090_000_000, first, last, 12, "UAL123",
+            decimal.Decimal("40.1"), decimal.Decimal("-73.2"), decimal.Decimal("35000"),
+            decimal.Decimal("35100"), decimal.Decimal("450"), decimal.Decimal("270"),
+            decimal.Decimal("0"), decimal.Decimal("0"), "1200", False, {"nav": "on"},
+        )
+        result = aircraft_log.snapshot_rows([row])
+        self.assertEqual(len(result), 1)
+        item = result[0]
+        self.assertEqual(item["bucket"], bucket.isoformat())
+        self.assertEqual(item["first"], first.isoformat())
+        self.assertEqual(item["last"], last.isoformat())
+        self.assertEqual(item["band"], 1090)
+        self.assertIsInstance(item["band"], int)
+        for key in ("lat", "lon", "alt_baro", "alt_geom", "gs", "track", "vr_baro", "vr_geom"):
+            self.assertIsInstance(item[key], float)
+        self.assertEqual(item["lat"], 40.1)
+        self.assertEqual(item["squawk"], "1200")
+        self.assertEqual(item["on_ground"], False)
+        self.assertEqual(item["fields"], {"nav": "on"})
+
+    def test_empty_rows(self):
+        self.assertEqual(aircraft_log.snapshot_rows([]), [])
+
+
+class SightingsAndSnapshotsSqlTests(unittest.TestCase):
+    def test_sightings_sql_uses_gap_and_filters(self):
+        self.assertIn(f"interval '{aircraft_log.SIGHTING_GAP_MINUTES} minutes'",
+                      aircraft_log.SIGHTINGS_SQL)
+        self.assertIn("%(address_type)s", aircraft_log.SIGHTINGS_SQL)
+        self.assertIn("%(address)s", aircraft_log.SIGHTINGS_SQL)
+
+    def test_snapshots_sql_has_limit(self):
+        self.assertIn("LIMIT 5000", aircraft_log.SNAPSHOTS_SQL)
+        self.assertIn("%(address_type)s", aircraft_log.SNAPSHOTS_SQL)
+        self.assertIn("%(address)s", aircraft_log.SNAPSHOTS_SQL)
 
 
 if __name__ == "__main__":
