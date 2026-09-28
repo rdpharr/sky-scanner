@@ -72,6 +72,23 @@ their timestamps never advance unless received again. Null typed columns mean
 the value was unknown or expired. Different frequency observations remain
 separate. Rebroadcast reception frequency is not the original transmitter band.
 
+## Community aircraft database (tar1090-db)
+
+Every 30 minutes the enrichment worker looks up newly observed aircraft in
+[tar1090-db](https://github.com/wiedehopf/tar1090-db), the community database
+(derived from Mictronics) behind readsb/tar1090. It is downloaded daily. Only
+aircraft actually observed are stored, as the `tar1090_db` source (partial,
+change-only imports), with its flags (military, PIA, LADD) as tags. Rows
+marked "miscode" identify transponders broadcasting invalid addresses. The
+repository states no license: the data stays in this private database and is
+never committed. Identity precedence is FAA, then tar1090-db, then OpenSky,
+then the plane-alert-db military list. Set `TAR1090_DB_ENABLED=0` to disable
+it.
+
+The aircraft log hides "unconfirmed" addresses by default. These were heard in
+only one message and never again, and are usually decoding errors rather than
+real aircraft. Choose "Show unconfirmed" to include them.
+
 ## Military aircraft identification
 
 The enrichment worker identifies military aircraft and decodes only those.
@@ -79,6 +96,7 @@ Detection runs locally against every aircraft, with no per-aircraft network
 calls. An aircraft counts as military when any of these holds:
 
 - its ICAO address is in the US military block (AE0000–AFFFFF);
+- tar1090-db flags it as military;
 - it is on the [plane-alert-db](https://github.com/sdr-enthusiasts/plane-alert-db)
   military list (ODbL, refreshed daily), which gives operator, type, serial
   and tags;

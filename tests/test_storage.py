@@ -121,6 +121,31 @@ class StorageTests(unittest.TestCase):
         self.connection.commit.assert_not_called()
         self.cursor.close.assert_called_once()
 
+    def test_partial_import_skips_absent_insert(self):
+        self.cursor.fetchone.return_value = None
+        records = [{
+            "icao_address": "ABC123", "registration": "N1",
+            "source_url": "https://example.test/data",
+            "retrieved_at": "2026-01-01T00:00:00Z", "dataset_hash": "h",
+        }]
+        self.storage.save_metadata_import(records, batch_size=1, partial=True)
+        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
+        self.assertIn(_METADATA_INSERT_CHANGED, executed_sql)
+        self.assertNotIn(_METADATA_INSERT_ABSENT, executed_sql)
+        self.connection.commit.assert_called_once()
+
+    def test_default_partial_false_runs_absent_insert(self):
+        self.cursor.fetchone.return_value = None
+        records = [{
+            "icao_address": "ABC123", "registration": "N1",
+            "source_url": "https://example.test/data",
+            "retrieved_at": "2026-01-01T00:00:00Z", "dataset_hash": "h",
+        }]
+        self.storage.save_metadata_import(records, batch_size=1)
+        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
+        self.assertIn(_METADATA_INSERT_CHANGED, executed_sql)
+        self.assertIn(_METADATA_INSERT_ABSENT, executed_sql)
+
     def test_schema_has_historical_asof_metadata_and_postgis(self):
         path = os.path.join(os.path.dirname(__file__), "..", "sql", "schema.sql")
         with open(path, encoding="utf-8") as schema_file:

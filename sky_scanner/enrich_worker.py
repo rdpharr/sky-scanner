@@ -14,7 +14,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from . import aircraft_log, military, opensky, wikipedia
+from . import aircraft_log, military, opensky, tar1090db, wikipedia
 from .enrichment import FAA_REGISTRY_URL, parse_faa_registry
 from .storage import PostgresStorage
 
@@ -387,6 +387,66 @@ class TypeImageWorker:
                 close()
 
 
+class Tar1090DbWorker:
+    """Enrich observed aircraft from tar1090-db (refreshed daily).
+
+    Every 30 minutes, aircraft observed since the previous cycle (all
+    observed aircraft on the first cycle) are looked up in the in-memory
+    table and saved as a partial, change-only import. The archive is
+    downloaded again when the in-memory copy is a day old.
+    """
+
+    interval_seconds = 30 * 60
+
+    def __init__(self, *, storage_factory: Callable[[], Any] = PostgresStorage.from_env,
+                 download: Callable[[], bytes] = tar1090db.download,
+                 clock: Callable[[], float] = time.monotonic, emit: Callable[[str], None] = print):
+        self.storage_factory = storage_factory
+        self.download = download
+        self.clock = clock
+        self.emit = emit
+        self._table: dict[str, tuple] | None = None
+        self._digest: str | None = None
+        self._loaded_at = 0.0
+        self._last_run: datetime | None = None
+
+    def process_once(self) -> dict[str, Any]:
+        storage = self.storage_factory()
+        try:
+            refreshed = False
+            if self._table is None or self.clock() - self._loaded_at > DAILY_SECONDS:
+                self._digest, self._table = tar1090db.parse(self.download())
+                self._loaded_at = self.clock()
+                refreshed = True
+            started = datetime.now(timezone.utc)
+            cursor = storage.connection.cursor()
+            try:
+                if refreshed or self._last_run is None:
+                    cursor.execute("SELECT DISTINCT address FROM aircraft_snapshots")
+                else:
+                    cursor.execute("SELECT DISTINCT address FROM aircraft_snapshots "
+                                   "WHERE bucket_start >= %s", (self._last_run - timedelta(minutes=5),))
+                addresses = [row[0] for row in cursor.fetchall()]
+            finally:
+                cursor.close()
+            found = tar1090db.records(self._table, addresses, dataset_hash=self._digest,
+                                      retrieved_at=started)
+            if found:
+                storage.save_metadata_import(
+                    found, source_url=tar1090db.URL, retrieved_at=started,
+                    dataset_hash=self._digest, source_name=tar1090db.SOURCE_NAME, partial=True)
+            self._last_run = started
+            summary = {"source": tar1090db.SOURCE_NAME, "checked": len(addresses),
+                       "matched": len(found), "refreshed": refreshed}
+            if refreshed or found:
+                self.emit(json.dumps(summary, separators=(",", ":")))
+            return summary
+        finally:
+            close = getattr(getattr(storage, "connection", None), "close", None)
+            if callable(close):
+                close()
+
+
 def run_forever(
     worker: Any,
     *,
@@ -440,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
             workers.append(OpenSkyWorker())
         if os.environ.get("MILITARY_ENABLED", "1") != "0":
             workers += [MilitaryReferenceWorker(), CallwordWorker()]
+        if os.environ.get("TAR1090_DB_ENABLED", "1") != "0":
+            workers.append(Tar1090DbWorker())
         if os.environ.get("TYPE_IMAGES_ENABLED", "1") != "0":
             workers.append(TypeImageWorker())
         run_forever(workers, once=args.once)

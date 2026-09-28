@@ -202,7 +202,7 @@ class PostgresStorage:
     def save_metadata_import(
         self, records: Iterable[dict[str, Any]], *, source_url: str | None = None,
         retrieved_at: Any | None = None, dataset_hash: str | None = None,
-        batch_size: int = 5000, source_name: str = "faa_registry",
+        batch_size: int = 5000, source_name: str = "faa_registry", partial: bool = False,
     ) -> str:
         """Save import provenance and only the metadata versions that changed.
 
@@ -211,6 +211,8 @@ class PostgresStorage:
         registry fields differ from its latest version from the same ``source_name``; an
         ``absent`` version is written when a previously present aircraft is no
         longer listed. Unchanged daily refreshes therefore add no metadata rows.
+        ``partial`` imports cover only some aircraft (for example, only those
+        observed), so no ``absent`` versions are written for the rest.
         Uses the parser's provenance when import-level values are omitted.
         Returns the enrichment_imports UUID as text.
         """
@@ -259,8 +261,9 @@ class PostgresStorage:
                       "dataset_hash": dataset_hash, "import_id": import_id}
             cursor.execute(_METADATA_INSERT_CHANGED, params)
             changed = max(0, int(cursor.rowcount or 0))
-            cursor.execute(_METADATA_INSERT_ABSENT, params)
-            changed += max(0, int(cursor.rowcount or 0))
+            if not partial:
+                cursor.execute(_METADATA_INSERT_ABSENT, params)
+                changed += max(0, int(cursor.rowcount or 0))
             cursor.execute("UPDATE enrichment_imports SET changed_count = %s WHERE id = %s",
                            (changed, import_id))
             self.connection.commit()

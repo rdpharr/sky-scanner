@@ -14,6 +14,7 @@ from sky_scanner.enrich_worker import (
     CallwordWorker,
     EnrichmentWorker,
     MilitaryReferenceWorker,
+    Tar1090DbWorker,
     TypeImageWorker,
     download_registry,
     run_forever,
@@ -512,6 +513,122 @@ class RunForeverTests(unittest.TestCase):
             run_forever(worker, sleep=fake_sleep, clock=clock.now)
         worker.process_once.assert_called_once()
         self.assertEqual(sleeps, [DAILY_SECONDS])
+
+
+# --- Tar1090DbWorker -----------------------------------------------------------
+
+class Tar1090Cursor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql, params=()):
+        self.connection.queries.append((sql, params))
+
+    def fetchall(self):
+        return [(a,) for a in self.connection.addresses]
+
+    def close(self):
+        pass
+
+
+class Tar1090Connection:
+    def __init__(self, addresses):
+        self.addresses = addresses
+        self.queries = []
+        self.closed = False
+
+    def cursor(self):
+        return Tar1090Cursor(self)
+
+    def close(self):
+        self.closed = True
+
+
+class Tar1090Storage:
+    def __init__(self, addresses):
+        self.connection = Tar1090Connection(addresses)
+        self.saved = []
+
+    def save_metadata_import(self, records, **kwargs):
+        self.saved.append((records, kwargs))
+        return "import-uuid"
+
+
+TAR1090_TABLE = {"AAAAAA": ("N1", "B738", "10", "Desc", None, None)}
+
+
+class Tar1090DbWorkerTests(unittest.TestCase):
+    def test_first_cycle_queries_all_addresses_and_saves_partial(self):
+        storage = Tar1090Storage(["AAAAAA", "BBBBBB"])
+        clock = FakeClock()
+        download = MagicMock(return_value=b"raw")
+        with patch("sky_scanner.enrich_worker.tar1090db.parse",
+                   return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
+                                     clock=clock.now, emit=lambda _: None)
+            summary = worker.process_once()
+        parse.assert_called_once()
+        download.assert_called_once()
+        sql, params = storage.connection.queries[0]
+        self.assertIn("SELECT DISTINCT address FROM aircraft_snapshots", sql)
+        self.assertNotIn("WHERE", sql)
+        self.assertEqual(params, ())
+        self.assertEqual(len(storage.saved), 1)
+        records, kwargs = storage.saved[0]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(kwargs["source_name"], "tar1090_db")
+        self.assertTrue(kwargs["partial"])
+        self.assertEqual(summary["matched"], 1)
+        self.assertTrue(storage.connection.closed)
+
+    def test_second_cycle_within_a_day_does_not_redownload_and_queries_since_last_run(self):
+        storage = Tar1090Storage(["AAAAAA"])
+        clock = FakeClock()
+        download = MagicMock(return_value=b"raw")
+        with patch("sky_scanner.enrich_worker.tar1090db.parse",
+                   return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
+                                     clock=clock.now, emit=lambda _: None)
+            worker.process_once()
+            clock.advance(60)
+            storage.connection.queries.clear()
+            worker.process_once()
+        self.assertEqual(download.call_count, 1)
+        self.assertEqual(parse.call_count, 1)
+        sql, params = storage.connection.queries[0]
+        self.assertIn("bucket_start >=", sql)
+        self.assertEqual(len(params), 1)
+
+    def test_redownloads_after_a_day_and_queries_all_addresses_again(self):
+        storage = Tar1090Storage(["AAAAAA"])
+        clock = FakeClock()
+        download = MagicMock(return_value=b"raw")
+        with patch("sky_scanner.enrich_worker.tar1090db.parse",
+                   return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
+                                     clock=clock.now, emit=lambda _: None)
+            worker.process_once()
+            clock.advance(DAILY_SECONDS + 1)
+            storage.connection.queries.clear()
+            worker.process_once()
+        self.assertEqual(download.call_count, 2)
+        self.assertEqual(parse.call_count, 2)
+        sql, params = storage.connection.queries[0]
+        self.assertNotIn("WHERE", sql)
+        self.assertEqual(params, ())
+
+    def test_no_save_when_nothing_matched(self):
+        storage = Tar1090Storage(["ZZZZZZ"])  # not present in the table
+        clock = FakeClock()
+        with patch("sky_scanner.enrich_worker.tar1090db.parse",
+                   return_value=("hash1", TAR1090_TABLE)):
+            worker = Tar1090DbWorker(storage_factory=lambda: storage,
+                                     download=MagicMock(return_value=b"raw"),
+                                     clock=clock.now, emit=lambda _: None)
+            summary = worker.process_once()
+        self.assertEqual(storage.saved, [])
+        self.assertEqual(summary["matched"], 0)
+        self.assertTrue(storage.connection.closed)
 
 
 if __name__ == "__main__":

@@ -101,6 +101,7 @@ Before implementation: identify the antenna; validate decoder paths; authenticat
   - tactical callwords of military aircraft only are looked up, cached and rate-limited, in War Watch Intel's callsign codex.
   Callword results are shown as evidence, not as unit identification.
 - Added representative Wikipedia type photos on the aircraft detail page, 2026-09-28, at the user's request. Commons images only; hotlinked, not stored.
+- Added tar1090-db identity enrichment (observed aircraft only; unlicensed, not committed) and hid single-message "unconfirmed" addresses by default, 2026-09-28. Of 1,475 confirmed aircraft at that point, 2 remained unidentified.
 - FAA metadata is versioned only on change, with an explicit `absent` status when an aircraft leaves the registry. This bounds growth from daily refreshes.
 - Chosen defaults:
   - 60 s field carry-forward;

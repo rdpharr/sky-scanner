@@ -260,11 +260,11 @@ def _sighting_row(start, end, snapshots=5, messages=50, bands=(1_090_000_000,),
 def _metadata_row(source_name, registry_status, registration="", manufacturer="", model="",
                    aircraft_type="", icao_type_code="", registered_owner="", operator="",
                    operator_icao="", country="", source_url="", retrieved_at=None,
-                   dataset_hash="hash"):
+                   dataset_hash="hash", category=None, tags=None):
     retrieved_at = retrieved_at or datetime(2024, 1, 1, tzinfo=timezone.utc)
     return (source_name, registry_status, registration, manufacturer, model, aircraft_type,
             icao_type_code, registered_owner, operator, operator_icao, country, source_url,
-            retrieved_at, dataset_hash)
+            retrieved_at, dataset_hash, category, tags)
 
 
 class DetailTests(unittest.TestCase):
@@ -551,6 +551,162 @@ class SummarizeMilitaryColumnsTests(unittest.TestCase):
         result = aircraft_log.summarize([row], self.types)[0]
         self.assertEqual(result["kind"], "Military")
         self.assertEqual(result["op"], "Air Mobility Command")
+
+
+# --- summarize/identify: tar1090-db columns and source precedence ------------
+
+def _row_with_tar1090(t_reg=None, t_type=None, t_model=None, t_owner=None, t_tags=None, **kwargs):
+    return _row_with_military(**kwargs) + (t_reg, t_type, t_model, t_owner, t_tags)
+
+
+class SummarizeTar1090ColumnsTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_32_column_row_with_tar1090_fields(self):
+        row = _row_with_tar1090(address="A01234", t_reg="N1AB", t_type="B738",
+                                t_model="Boeing 737-800", t_owner="ACME LLC")
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertEqual(result["src"], "T")
+        self.assertEqual(result["reg"], "N1AB")
+        self.assertEqual(result["tc"], "B738")
+
+    def test_tar1090_military_tag_adds_evidence_and_military_kind(self):
+        row = _row_with_tar1090(address="A01234", t_reg="63-8146", t_type="T38",
+                                t_model="NORTHROP T-38 Talon", t_tags="military")
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertIn("tar1090-db military flag", result["military_evidence"])
+        self.assertEqual(result["kind"], "Military")
+
+    def test_still_accepts_27_column_rows_without_tar1090(self):
+        row = _row_with_military(address="A01234")
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertEqual(result["src"], "-")
+
+    def test_unconfirmed_true_below_two_messages(self):
+        row = _row(messages=1)
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertTrue(result["unconfirmed"])
+
+    def test_unconfirmed_false_at_two_messages(self):
+        row = _row(messages=2)
+        result = aircraft_log.summarize([row], self.types)[0]
+        self.assertFalse(result["unconfirmed"])
+
+
+class Tar1090IdentifyTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_tar1090_reg_or_type_gives_src_t_when_no_faa(self):
+        tar1090 = {"registration": "N1AB", "icao_type_code": "B738"}
+        result = aircraft_log.identify("A01234", None, None, None, self.types, tar1090=tar1090)
+        self.assertEqual(result["src"], "T")
+        self.assertEqual(result["reg"], "N1AB")
+        self.assertEqual(result["tc"], "B738")
+
+    def test_tar1090_type_preferred_over_opensky_type(self):
+        opensky = {"icao_type_code": "C172", "registration": "D-ABCD"}
+        tar1090 = {"icao_type_code": "B738"}
+        result = aircraft_log.identify("A01234", None, None, opensky, self.types, tar1090=tar1090)
+        self.assertEqual(result["tc"], "B738")
+        self.assertEqual(result["src"], "T")
+
+    def test_tar1090_reg_preferred_over_opensky_reg(self):
+        opensky = {"registration": "D-ABCD"}
+        tar1090 = {"registration": "N1AB", "icao_type_code": "B738"}
+        result = aircraft_log.identify("A01234", None, None, opensky, self.types, tar1090=tar1090)
+        self.assertEqual(result["reg"], "N1AB")
+
+    def test_faa_reg_wins_over_tar1090(self):
+        faa = {"registration": "N999FA", "model": "737-823", "manufacturer": "BOEING"}
+        tar1090 = {"registration": "N1AB", "icao_type_code": "B738"}
+        result = aircraft_log.identify("A01234", None, faa, None, self.types, tar1090=tar1090)
+        self.assertEqual(result["src"], "F")
+        self.assertEqual(result["reg"], "N999FA")
+
+    def test_only_opensky_gives_src_o(self):
+        opensky = {"registration": "D-ABCD", "icao_type_code": "A320"}
+        result = aircraft_log.identify("A01234", None, None, opensky, self.types)
+        self.assertEqual(result["src"], "O")
+
+    def test_only_plane_alert_gives_src_m(self):
+        plane_alert = {"registration": "12-3456", "model": "C-17A"}
+        result = aircraft_log.identify("A01234", None, None, None, self.types,
+                                       plane_alert=plane_alert)
+        self.assertEqual(result["src"], "M")
+
+    def test_nothing_gives_dash(self):
+        result = aircraft_log.identify("A01234", None, None, None, self.types)
+        self.assertEqual(result["src"], "-")
+
+    def test_owner_precedence_faa_over_tar1090_over_opensky(self):
+        faa = {"registered_owner": "FAA OWNER"}
+        tar1090 = {"registered_owner": "TAR OWNER"}
+        opensky = {"registered_owner": "OS OWNER"}
+        result = aircraft_log.identify("A01234", None, faa, opensky, self.types, tar1090=tar1090)
+        self.assertEqual(result["owner"], "FAA OWNER")
+
+    def test_owner_tar1090_over_opensky_when_no_faa(self):
+        tar1090 = {"registered_owner": "TAR OWNER"}
+        opensky = {"registered_owner": "OS OWNER"}
+        result = aircraft_log.identify("A01234", None, None, opensky, self.types, tar1090=tar1090)
+        self.assertEqual(result["owner"], "TAR OWNER")
+
+    def test_tar1090_military_tag_adds_evidence(self):
+        tar1090 = {"tags": "military"}
+        result = aircraft_log.identify("A01234", None, None, None, self.types, tar1090=tar1090)
+        self.assertIn("tar1090-db military flag", result["military_evidence"])
+
+    def test_miscode_tags_gives_miscode_true_and_special_model(self):
+        tar1090 = {"tags": "miscode"}
+        result = aircraft_log.identify("000FFF", None, None, None, self.types, tar1090=tar1090)
+        self.assertTrue(result["miscode"])
+        self.assertEqual(result["model"], "Invalid transponder address (miscode)")
+        self.assertEqual(result["src"], "-")
+        self.assertEqual(result["military_evidence"], [])
+
+    def test_miscode_via_registered_owner_text_with_military_tag(self):
+        tar1090 = {"registered_owner": "Miscode - VARIOUS", "tags": "military"}
+        result = aircraft_log.identify("000FFF", None, None, None, self.types, tar1090=tar1090)
+        self.assertTrue(result["miscode"])
+        self.assertEqual(result["model"], "Invalid transponder address (miscode)")
+        self.assertNotIn("tar1090-db military flag", result["military_evidence"])
+
+
+class Tar1090DetailTests(unittest.TestCase):
+    def setUp(self):
+        self.types = aircraft_log.parse_doc8643(DOC8643_CSV.encode("utf-8"))
+
+    def test_tar1090_metadata_row_makes_identity_source_t(self):
+        sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+            messages=50,
+        )]
+        metadata_rows = [
+            _metadata_row("tar1090_db", "present", registration="N1AB",
+                         icao_type_code="B738", model="Boeing 737-800",
+                         registered_owner="ACME LLC"),
+        ]
+        result = aircraft_log.detail("A01234", metadata_rows, sighting_rows, None, self.types)
+        self.assertEqual(result["identity"]["src"], "T")
+        self.assertEqual(result["identity"]["reg"], "N1AB")
+
+    def test_unconfirmed_true_below_two_total_messages(self):
+        sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+            messages=1,
+        )]
+        result = aircraft_log.detail("A01234", [], sighting_rows, None, self.types)
+        self.assertTrue(result["unconfirmed"])
+
+    def test_unconfirmed_false_at_two_total_messages(self):
+        sighting_rows = [_sighting_row(
+            datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+            messages=2,
+        )]
+        result = aircraft_log.detail("A01234", [], sighting_rows, None, self.types)
+        self.assertFalse(result["unconfirmed"])
 
 
 if __name__ == "__main__":

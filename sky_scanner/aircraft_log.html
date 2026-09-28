@@ -11,7 +11,7 @@
   --ground:#F2F5F8; --panel:#FFFFFF; --ink:#15202B; --muted:#586575; --rule:#D8DFE7;
   --accent:#1D5AA6; --accent-soft:#E3ECF8; --uat:#A3286F; --uat-soft:#F6E4EF;
   --faa:#1F7A4D; --faa-soft:#E2F2E9; --osk:#9A6A00; --osk-soft:#FBF0D6; --none:#8A95A3; --none-soft:#ECEFF3;
-  --mil:#5E4B8B; --mil-soft:#ECE8F6; --row-hover:#EEF3FA;
+  --mil:#5E4B8B; --mil-soft:#ECE8F6; --row-hover:#EEF3FA; --tdb:#1E6F86; --tdb-soft:#DEF0F5;
   --sans:"IBM Plex Sans Condensed","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
@@ -21,7 +21,7 @@
     --ground:#0F151C; --panel:#151D26; --ink:#E4EAF1; --muted:#95A2B2; --rule:#26313D;
     --accent:#7FB0F0; --accent-soft:#1B2B40; --uat:#E58ABF; --uat-soft:#3A1E30;
     --faa:#6FCF9C; --faa-soft:#14302A; --osk:#E3B955; --osk-soft:#342A12; --none:#8793A2; --none-soft:#222B35;
-    --mil:#B7A6E8; --mil-soft:#2A2440; --row-hover:#1B2633;
+    --mil:#B7A6E8; --mil-soft:#2A2440; --row-hover:#1B2633; --tdb:#7CCBE0; --tdb-soft:#15303A;
   }
 }
 :root[data-theme="dark"]{
@@ -29,7 +29,7 @@
   --ground:#0F151C; --panel:#151D26; --ink:#E4EAF1; --muted:#95A2B2; --rule:#26313D;
   --accent:#7FB0F0; --accent-soft:#1B2B40; --uat:#E58ABF; --uat-soft:#3A1E30;
   --faa:#6FCF9C; --faa-soft:#14302A; --osk:#E3B955; --osk-soft:#342A12; --none:#8793A2; --none-soft:#222B35;
-  --mil:#B7A6E8; --mil-soft:#2A2440; --row-hover:#1B2633;
+  --mil:#B7A6E8; --mil-soft:#2A2440; --row-hover:#1B2633; --tdb:#7CCBE0; --tdb-soft:#15303A;
 }
 body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.45}
 .wrap{max-width:1320px;margin:0 auto;padding-inline:16px;padding-block:28px 48px;display:flex;flex-direction:column;gap:20px}
@@ -64,6 +64,9 @@ tbody tr:hover{background:var(--row-hover)}
 .sF{background:var(--faa-soft);color:var(--faa)}
 .sO{background:var(--osk-soft);color:var(--osk)}
 .s-{background:var(--none-soft);color:var(--none)}
+.sT{background:var(--tdb-soft);color:var(--tdb)}
+.sM{background:var(--mil-soft);color:var(--mil)}
+.notice{background:var(--none-soft);border-radius:5px;padding:10px 12px;font-size:14px}
 .kMil{background:var(--mil-soft);color:var(--mil)}
 .acft{min-width:180px}
 .owner{max-width:260px}
@@ -162,6 +165,7 @@ body{margin:0}
   <div class="toolbar">
     <button class="refresh" id="refresh" type="button">Refresh</button>
     <div class="group" id="range"><span>Heard in</span></div>
+    <button class="chip" type="button" id="toggle-unconfirmed" aria-pressed="false" title="Addresses heard in only one message, probably decoding errors">Show unconfirmed</button>
     <span class="status" id="status" aria-live="polite">Loading…</span>
   </div>
 
@@ -210,7 +214,8 @@ body{margin:0}
   </section>
 
   <footer>
-    <p><span class="tag sF">FAA</span> registration, aircraft and registered owner from the FAA releasable registry (official). <span class="tag sO">OpenSky</span> fills in only where FAA has no match: crowdsourced, unverified, sometimes stale. <span class="tag s-">None</span> means neither source identifies the address.</p>
+    <p>Identity sources, in order of preference: <span class="tag sF">FAA</span> releasable registry (official); <span class="tag sT">tar1090-db</span> (current community database, refreshed daily); <span class="tag sO">OpenSky</span> (crowdsourced snapshot, sometimes stale); <span class="tag sM">Military list</span> (plane-alert-db). <span class="tag s-">None</span> means no source identifies the address.</p>
+    <p>Addresses heard in only one message are hidden unless you choose Show unconfirmed. They are usually decoding errors, not real aircraft.</p>
     <p>Types are ICAO Doc 8643 designators (OpenSky, or derived from the FAA model). Wide-body means heavy wake category; other non-airliner jets count as business jets. "Airline" is a heuristic from callsign, owner and type; registered owner is not necessarily the operator.</p>
     <p>First and last seen are reception times; max altitude is barometric, in feet. Read-only view served from the Sky Scanner database.</p>
   </footer>
@@ -221,13 +226,13 @@ const $ = id => document.getElementById(id);
 const fmt = n => Number(n).toLocaleString();
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const title = s => s && s === s.toUpperCase() && s.length > 3 ? s.toLowerCase().replace(/\b([a-z])/g, m => m.toUpperCase()).replace(/\b(Llc|Inc|Co|Corp|Na|Sa|S A|Sas|Lp)\b/g, m => m.toUpperCase()) : s;
-const srcLabel = { F: 'FAA', O: 'OpenSky', '-': 'None' };
+const srcLabel = { F: 'FAA', T: 'tar1090-db', O: 'OpenSky', M: 'Military list', '-': 'None' };
 const dateFmt = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 const when = iso => { if (!iso) return '—'; const d = new Date(iso); return `${dateFmt.format(d)}<small>${timeFmt.format(d)}</small>`; };
 $('tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
 
-let rows = [], classOrder = [];
+let rows = [], allRows = [], classOrder = [], lastData = null;
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const state = { range: store.get('sky-range', 'all'), kind: 'all', source: 'all', band: 'all', q: '', sort: 'first', dir: -1 };
 
@@ -247,7 +252,7 @@ function setChip(key, value) {
 }
 chips('range', 'range', [['1', '24 h'], ['7', '7 days'], ['30', '30 days'], ['all', 'All time']], () => { store.set('sky-range', state.range); load(); });
 chips('kind', 'kind', [['all', 'All'], ['nonairline', 'Hide airlines'], ['Airline', 'Airlines only'], ['Military', 'Military']], render);
-chips('source', 'source', [['all', 'Any'], ['F', 'FAA'], ['O', 'OpenSky'], ['-', 'Unidentified']], render);
+chips('source', 'source', [['all', 'Any'], ['F', 'FAA'], ['T', 'tar1090-db'], ['O', 'OpenSky'], ['M', 'Military list'], ['-', 'Unidentified']], render);
 chips('band', 'band', [['all', 'Both'], ['1090', '1090 MHz'], ['978', '978 MHz']], render);
 
 const cols = [['first', 'First seen'], ['last', 'Last seen'], ['icao', 'ICAO'], ['band', 'Band'], ['cs', 'Callsign'], ['reg', 'Registration'],
@@ -291,7 +296,7 @@ function render() {
     <td class="mono">${esc(r.cs) || '<span class="muted">—</span>'}</td>
     <td class="mono">${esc(r.reg) || '<span class="muted">—</span>'}</td>
     <td class="mono">${esc(r.tc)}</td>
-    <td class="acft">${esc(r.model)}${r.kind === 'Military' ? ' <span class="tag kMil">military</span>' : ''}</td>
+    <td class="acft">${esc(r.model)}${r.kind === 'Military' ? ' <span class="tag kMil">military</span>' : ''}${r.unconfirmed ? ' <span class="tag s-" title="Heard in only one message">unconfirmed</span>' : ''}</td>
     <td>${esc(r.op)}</td>
     <td class="owner">${esc(title(r.owner))}</td>
     <td><span class="tag s${esc(r.src)}">${srcLabel[r.src]}</span></td>
@@ -347,6 +352,20 @@ tabs.totals.addEventListener('click', () => showTab('totals'));
 tabs.list.addEventListener('click', () => showTab('list'));
 $('q').addEventListener('input', e => { state.q = e.target.value; render(); });
 
+
+function applyUnconfirmed() {
+  const hidden = allRows.filter(r => r.unconfirmed).length;
+  rows = state.showUnconfirmed ? allRows : allRows.filter(r => !r.unconfirmed);
+  const t = $('toggle-unconfirmed');
+  t.setAttribute('aria-pressed', String(state.showUnconfirmed));
+  t.textContent = state.showUnconfirmed ? `Hide unconfirmed (${fmt(hidden)})` : `Show unconfirmed (${fmt(hidden)})`;
+  if (lastData) renderStats(lastData);
+  renderTotals(); render();
+}
+state.showUnconfirmed = store.get('sky-unconfirmed', '0') === '1';
+$('toggle-unconfirmed').addEventListener('click', () => {
+  state.showUnconfirmed = !state.showUnconfirmed; store.set('sky-unconfirmed', state.showUnconfirmed ? '1' : '0'); applyUnconfirmed();
+});
 async function load() {
   const btn = $('refresh'), status = $('status');
   btn.disabled = true; status.className = 'status'; status.textContent = 'Refreshing…';
@@ -354,8 +373,8 @@ async function load() {
     const res = await fetch(`/api/aircraft?days=${state.range}`, { cache: 'no-store' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    rows = data.rows; classOrder = data.classes;
-    renderStats(data); renderTotals(); render();
+    allRows = data.rows; classOrder = data.classes; lastData = data;
+    applyUnconfirmed();
     const last = data.last_heard ? `last aircraft heard ${timeFmt.format(new Date(data.last_heard))}` : 'nothing heard yet';
     status.textContent = `Updated ${timeFmt.format(new Date(data.generated_at))} · ${last}`;
   } catch (err) {
@@ -480,6 +499,15 @@ function typePhoto(d) {
   return `<figure class="typephoto">${pic}<figcaption>${img.image_url ? 'Representative photo of the type, not this specific aircraft. ' : 'Wikipedia has no freely licensed photo for this type. '}
     <a href="${esc(img.article_url)}" target="_blank" rel="noopener noreferrer">${esc(img.title)} — Wikipedia ↗</a>${img.file_url ? ` · <a href="${esc(img.file_url)}" target="_blank" rel="noopener noreferrer">photo credit &amp; license ↗</a>` : ''}</figcaption></figure>`;
 }
+
+function tdbCard(d) {
+  const t = d.metadata.find(m => m.source_name === 'tar1090_db');
+  if (!t || t.registry_status !== 'present' || d.identity.miscode) return '';
+  const rows = [['Registration', t.registration], ['Aircraft', t.model], ['ICAO type', t.icao_type_code],
+    ['Owner / operator', t.registered_owner], ['Flags', t.tags],
+    ['Retrieved', t.retrieved_at ? fullFmt.format(new Date(t.retrieved_at)) : '']].filter(([, v]) => v);
+  return `<div class="panel"><h2>tar1090-db (community database, refreshed daily)</h2><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
+}
 function renderDetail(d) {
   const id = d.identity, t = d.totals;
   const latestOf = src => d.metadata.find(m => m.source_name === src) || null;
@@ -488,7 +516,7 @@ function renderDetail(d) {
   const stats = [[fullFmt.format(new Date(d.first)), 'first seen'], [fullFmt.format(new Date(d.last)), 'last seen'],
     [fmt(t.sightings), t.sightings === 1 ? 'sighting' : 'sightings'], [fmt(t.snapshots), 'snapshots'], [fmt(t.messages), 'messages'],
     [t.alt_max === null ? '—' : `${fmt(t.alt_max)} ft`, 'highest altitude'], [t.gs_max === null ? '—' : `${fmt(Math.round(t.gs_max))} kt`, 'fastest ground speed']];
-  const history = d.metadata.map(m => `<tr><td>${m.source_name === 'faa_registry' ? '<span class="tag sF">FAA</span>' : m.source_name === 'plane_alert_mil' ? '<span class="tag kMil">plane-alert mil</span>' : '<span class="tag sO">OpenSky</span>'}</td>
+  const history = d.metadata.map(m => `<tr><td>${m.source_name === 'faa_registry' ? '<span class="tag sF">FAA</span>' : m.source_name === 'plane_alert_mil' ? '<span class="tag kMil">plane-alert mil</span>' : m.source_name === 'tar1090_db' ? '<span class="tag sT">tar1090-db</span>' : '<span class="tag sO">OpenSky</span>'}</td>
     <td class="when">${m.retrieved_at ? when(m.retrieved_at) : '—'}</td><td>${m.registry_status === 'absent' ? '<span class="tag s-">no longer listed</span>' : 'listed'}</td>
     <td class="mono">${dash(m.registration)}</td><td>${dash([m.manufacturer, m.model].filter(Boolean).join(' '))}</td><td>${dash(title(m.registered_owner))}</td><td>${dash(m.operator || m.operator_icao)}</td></tr>`).join('');
   const lf = d.latest_fields;
@@ -516,7 +544,10 @@ function renderDetail(d) {
     </div>
     <div class="stats" style="gap:10px 26px">${stats.map(([n, l]) => `<div class="stat"><b style="font-size:18px">${esc(n)}</b><span>${l}</span></div>`).join('')}</div>
     ${t.callsigns.length ? `<p style="margin:0">Callsigns used: ${t.callsigns.map(c => `<span class="pill mono">${esc(c)}</span>`).join('')}</p>` : ''}
+    ${d.unconfirmed ? '<div class="notice">Unconfirmed: this address was heard in only one message and never again. It is probably a decoding error rather than a real aircraft.</div>' : ''}
+    ${id.miscode ? '<div class="notice">tar1090-db lists this address as a <b>miscode</b>: a transponder broadcasting an invalid or unset address, so the aircraft cannot be identified from it.</div>' : ''}
     ${militaryPanel(d)}
+    ${tdbCard(d)}
     <div class="two">
       ${metaCard('FAA registry', faa && faa.registry_status === 'present' ? faa : null, faa ? 'No longer listed in the FAA registry.' : 'No FAA registry match for this address.')}
       ${metaCard('OpenSky (crowdsourced)', os && os.registry_status === 'present' ? os : null, 'No OpenSky record for this address.')}
