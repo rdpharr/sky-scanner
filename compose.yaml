@@ -49,7 +49,9 @@ services:
       INGEST_URL: http://ingest:9000/events
       RECEIVER_ID: ${RECEIVER_ID:-home-hackrf}
       HACKRF_SERIAL: ${HACKRF_SERIAL:-}
-      DWELL_SECONDS: "30"
+      # 978 MHz has had almost no traffic here, so most listening goes to 1090.
+      DWELL_1090_SECONDS: "50"
+      DWELL_978_SECONDS: "10"
       LNA_GAIN: "40"
       VGA_GAIN: "48"
       RF_AMP: "1"

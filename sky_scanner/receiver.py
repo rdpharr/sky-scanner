@@ -229,6 +229,12 @@ def capture(frequency: int, seconds: float, emit, stop: threading.Event):
     return count
 
 
+def band_dwell(frequency: int) -> float:
+    """Per-band turn length; DWELL_SECONDS is the shared fallback."""
+    default = os.environ.get('DWELL_SECONDS', '30')
+    return float(os.environ.get(f'DWELL_{frequency // 1000000}_SECONDS', default))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seconds', type=float, default=0, help='zero runs indefinitely')
@@ -241,7 +247,6 @@ def main():
         signal.signal(sig, lambda *_: stop.set())
     sender = None if args.stdout else EventSender(os.environ.get('INGEST_URL', 'http://ingest:9000/events'))
     emit = (lambda event: print(json.dumps(event), flush=True)) if args.stdout else sender.put
-    dwell = float(os.environ.get('DWELL_SECONDS', '30'))
     end = time.monotonic() + args.seconds if args.seconds else float('inf')
     frequencies = [args.frequency * 1000000] if args.frequency else [1090000000, 978000000]
     try:
@@ -250,6 +255,7 @@ def main():
                 if stop.is_set() or time.monotonic() >= end:
                     break
                 turn_started = time.monotonic()
+                dwell = band_dwell(frequency)
                 try:
                     capture(frequency, min(dwell, end - time.monotonic()), emit, stop)
                 except (OSError, RuntimeError) as exc:

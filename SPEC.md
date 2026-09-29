@@ -13,7 +13,7 @@ Snapshots deliberately discard intermediate changes within each 15-second interv
 ## Reception and scheduling
 
 - One process owns the HackRF and coordinates decoder selection and retuning. Never run two competing USB readers.
-- Confirmed schedule: alternate 30-second turns on 1090 MHz and 978 MHz. Dwell durations are configurable independently of the 15-second snapshot intervals. Each band has roughly 30-second blind periods plus retuning overhead.
+- Schedule: alternate turns on 1090 MHz (50 s) and 978 MHz (10 s), set per band with `DWELL_1090_SECONDS` / `DWELL_978_SECONDS` (fallback `DWELL_SECONDS`). Dwell durations are independent of the 15-second snapshot intervals. 1090 has roughly 14-second blind periods (the 978 turn plus retuning and dump978 teardown); 978 has roughly 50-second blind periods. Originally 30 s each; changed 2026-09-29 because 978 traffic here is rare.
 - Persist actual listening interval start/end times and frequency as observation provenance, including retuning gaps. This is collection metadata, not a monitoring subsystem.
 - Decode Mode S/ADS-B aircraft data on 1090 MHz and UAT aircraft reports on 978 MHz. Preserve direct versus rebroadcast origin when available. Non-aircraft weather products are outside phase one.
 - Frequency is receiver tuning frequency in integer Hz, not a guess about the original transmitter band for rebroadcast reports.

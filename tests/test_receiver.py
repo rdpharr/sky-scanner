@@ -4,7 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, Mock, call, patch
 
-from sky_scanner.receiver import EventSender, capture, decoder_command, normalize_readsb
+from sky_scanner.receiver import EventSender, band_dwell, capture, decoder_command, normalize_readsb
 
 
 class ReadsbNormalizationTests(unittest.TestCase):
@@ -320,6 +320,16 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertEqual([event["type"] for event in emitted], ["interval"])
         self.assertEqual(emitted[0]["data"]["sample_config"]["exit_code"], 2)
+
+
+class DwellTests(unittest.TestCase):
+    def test_per_band_dwell_overrides_shared_fallback(self):
+        env = {"DWELL_SECONDS": "20", "DWELL_1090_SECONDS": "50"}
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(band_dwell(1090000000), 50.0)
+            self.assertEqual(band_dwell(978000000), 20.0)
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(band_dwell(978000000), 30.0)
 
 
 if __name__ == "__main__":
