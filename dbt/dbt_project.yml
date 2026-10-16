@@ -1,0 +1,51 @@
+name: sky_scanner
+version: "1.0.0"
+config-version: 2
+profile: sky_scanner
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+vars:
+  # A run of snapshots with no gap longer than this is one sighting.
+  sighting_gap_minutes: 10
+  # Fewer messages than this, ever, and an address is "unconfirmed":
+  # usually a decoding error rather than a real aircraft.
+  confirmed_min_messages: 2
+  # Aircraft-level novelty ("first ever", "back after an absence") means
+  # little until there is history to compare with: collection began here.
+  collection_start: "2026-09-26"
+  novelty_min_history_days: 56
+
+models:
+  sky_scanner:
+    # Descriptions are written to BigQuery so agents querying it see them.
+    +persist_docs: {relation: true, columns: true}
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+    public:
+      +materialized: view
+      +schema: public
+    semantic:
+      +materialized: table
+
+seeds:
+  sky_scanner:
+    +schema: analytics
+    faa_model_type_patterns:
+      +column_types: {priority: int64}
+    faa_registrant_types:
+      +column_types: {registrant_type: string, is_organization: bool}
+    squawk_codes:
+      +column_types: {squawk: string, is_emergency: bool}
+    local_airports:
+      +column_types: {latitude: float64, longitude: float64}

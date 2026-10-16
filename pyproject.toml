@@ -1,0 +1,22 @@
+# Tool configuration for the whole repository. Each component (edge,
+# services, jobs, dbt) keeps its own requirements.txt; this file is only for
+# linters and formatters, run in CI and locally from the repository root.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["dbt/dbt_packages", "dbt/target", "**/.venv"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, bugbear, pyupgrade, simplify.
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
+# B905: zip() here pairs columns of one table; strict= would only add noise.
+# A forced ternary is not always clearer than if/else.
+ignore = ["B905", "SIM108"]
+
+[tool.ruff.lint.per-file-ignores]
+# One prose description per public column: long lines are the content.
+"dbt/scripts/column_docs.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sky_scanner", "lib", "agent", "mcp_bridge", "openrouter", "publish", "verifier", "server"]

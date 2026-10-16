@@ -1,0 +1,86 @@
+name: sky-scanner
+x-app: &app
+  image: sky-scanner:local
+  restart: unless-stopped
+  init: true
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sky_scanner
+      POSTGRES_USER: sky_scanner
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run scripts/configure.py}
+      EXPLORER_PASSWORD: ${EXPLORER_PASSWORD:?Run scripts/configure.py}
+      LAN_SUBNET: ${LAN_SUBNET:-192.168.1.0/24}
+    ports:
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:5432:5432"
+    volumes:
+      - postgres-data-v1:/var/lib/postgresql/data
+      - ./docker/db-entrypoint.sh:/usr/local/bin/sky-db-entrypoint.sh:ro
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/10-sky-scanner.sh:ro
+      - ./secrets/server.crt:/run/sky/server.crt:ro
+      - ./secrets/server.key:/run/sky/server.key:ro
+    entrypoint: ["sh", "/usr/local/bin/sky-db-entrypoint.sh"]
+    command: ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/tmp/sky-tls/server.crt", "-c", "ssl_key_file=/tmp/sky-tls/server.key"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sky_scanner -d sky_scanner"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  ingest:
+    <<: *app
+    build: .
+    environment:
+      DATABASE_URL: postgresql://sky_scanner:${DB_PASSWORD}@db/sky_scanner?sslmode=require
+      RECEIVER_ID: ${RECEIVER_ID:-home-hackrf}
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["python", "-m", "sky_scanner.ingest"]
+  receiver:
+    <<: *app
+    environment:
+      INGEST_URL: http://ingest:9000/events
+      RECEIVER_ID: ${RECEIVER_ID:-home-hackrf}
+      HACKRF_SERIAL: ${HACKRF_SERIAL:-}
+      # 978 MHz has had almost no traffic here, so most listening goes to 1090.
+      DWELL_1090_SECONDS: "50"
+      DWELL_978_SECONDS: "10"
+      LNA_GAIN: "40"
+      VGA_GAIN: "48"
+      RF_AMP: "1"
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - 'c 189:* rw'
+    depends_on: [ingest]
+    command: ["python", "-m", "sky_scanner.receiver"]
+  enrichment:
+    <<: *app
+    environment:
+      DATABASE_URL: postgresql://sky_scanner:${DB_PASSWORD}@db/sky_scanner?sslmode=require
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["python", "-m", "sky_scanner.enrich_worker"]
+  replicator:
+    <<: *app
+    environment:
+      # Read-only role: replication never writes to the edge database.
+      REPLICATOR_DATABASE_URL: postgresql://explorer:${EXPLORER_PASSWORD}@db/sky_scanner?sslmode=require
+      BQ_PROJECT: ${BQ_PROJECT:-sky-scanner-pharr}
+      BQ_DATASET: raw
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-edge.json
+    volumes:
+      # Key for sky-edge, which can only write the BigQuery raw dataset.
+      - ./secrets/gcp-edge.json:/run/secrets/gcp-edge.json:ro
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["python", "-m", "sky_scanner.replicator"]
+volumes:
+  postgres-data-v1:

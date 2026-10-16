@@ -1,7 +1,11 @@
+# Context for images built from the repository root (jobs/, services/).
+# edge/ has its own Dockerfile and .dockerignore.
 .git
-.env
-.venv
-secrets
-data
-demo-output
-__pycache__
+**/.venv
+**/__pycache__
+**/target
+**/dbt_packages
+**/logs
+edge
+infra
+docs

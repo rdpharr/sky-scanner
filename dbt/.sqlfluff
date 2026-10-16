@@ -1,0 +1,29 @@
+# SQL style for the dbt models, checked in CI. The jinja templater with dbt
+# built-ins (ref, source, var, is_incremental) needs no BigQuery connection;
+# the dbt templater would compile against the warehouse.
+[sqlfluff]
+dialect = bigquery
+templater = jinja
+max_line_length = 120
+# ST07: `using` joins are deliberate in BigQuery. AM04: public views select *
+# from their mart on purpose. ST09: join order is cosmetic. RF04: column names
+# like `name` and `status` are part of the public contract.
+exclude_rules = structure.column_order, ST07, AM04, ST09, RF04
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = macros
+# Stand-ins for dbt_utils, target and run_query, which need a dbt project or a warehouse.
+library_path = sqlfluff_stubs
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower

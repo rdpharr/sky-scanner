@@ -1,17 +1,61 @@
-name: regression-tests
+name: tests and lint
 on: [push, pull_request]
+
 jobs:
-  unit:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m unittest discover -s tests -v
-  decoder-image:
+      - run: pip install -r requirements-lint.txt
+      - name: Python (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: SQL (sqlfluff, dbt models and tests)
+        working-directory: dbt
+        run: sqlfluff lint models tests macros
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform format
+        run: terraform fmt -check -recursive infra/terraform
+
+  edge:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+
+  edge-decoder-image:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t sky-scanner:test .
       - run: docker run --rm sky-scanner:test python -m unittest discover -s tests -v
+
+  python-services:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [services/web, services/mcp, jobs/notable]
+    defaults:
+      run:
+        working-directory: ${{ matrix.component }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v

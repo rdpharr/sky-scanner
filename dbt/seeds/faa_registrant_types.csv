@@ -1,0 +1,9 @@
+registrant_type,registrant_category,is_organization
+1,Individual,false
+2,Partnership,false
+3,Corporation,true
+4,Co-owned,false
+5,Government,true
+7,LLC,true
+8,Non-citizen corporation,true
+9,Non-citizen co-owned,false

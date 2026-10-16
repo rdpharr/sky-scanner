@@ -1,0 +1,31 @@
+{
+  "source": "Notable aircraft over northwest Las Vegas (Sky Scanner, 26 Sep to 2 Oct 2026), the owner's hand-checked report",
+  "week_ending": "2026-10-03",
+  "items": [
+    {"item": "Janet Boeing 737-600 shuttle", "match": ["N869HH", "N365SR", "N288DP", "N273RH", "N319BD"]},
+    {"item": "Janet King Airs", "match": ["N910CB", "N989RR"]},
+    {"item": "E-6B Mercury", "match": ["AF1D5B"]},
+    {"item": "WC-130J Hurricane Hunters", "match": ["97-5306", "96-5302"]},
+    {"item": "KC-46A Pegasus", "match": ["19-46008"]},
+    {"item": "C-37B", "match": ["20-1941"]},
+    {"item": "HC-130J Combat King II", "match": ["18-5906"]},
+    {"item": "E-2D Hawkeyes", "match": ["168600", "169061"]},
+    {"item": "P-8A Poseidon", "match": ["169562"]},
+    {"item": "T-38A Talon", "match": ["64-13301"]},
+    {"item": "RCAF CC-150 Polaris", "match": ["15004"]},
+    {"item": "C-32A", "match": ["99-0004"]},
+    {"item": "UH-72 Lakotas", "match": ["10-72149", "12-72265", "14-72316", "22-72474"]},
+    {"item": "UH-60 Black Hawks", "match": ["18-21014", "19-21054"]},
+    {"item": "MH-65D Dolphin (Coast Guard 6597)", "match": ["6597", "AE26B7"]},
+    {"item": "LVMPD MD 500", "match": ["N530JL"]},
+    {"item": "NNSA AW139", "match": ["N2415"]},
+    {"item": "Blue Air Training PC-9", "match": ["N905XX"]},
+    {"item": "DC-9-10", "match": ["N783TW"]},
+    {"item": "OV-10 Bronco", "match": ["N373SV"]},
+    {"item": "L-39 Albatros", "match": ["N101PJ", "N139ES"]},
+    {"item": "Civilian S-70 Black Hawk", "match": ["N133TH"]},
+    {"item": "MGM Resorts E190", "match": ["N783MM"]},
+    {"item": "TransMedics Phenom 300s", "match": ["TRANSMEDICS"]},
+    {"item": "Flight-training practice area", "match": ["training area", "practice area", "TACTICAL INTEGRATED TRAINING"]}
+  ]
+}

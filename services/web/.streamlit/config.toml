@@ -1,0 +1,36 @@
+# Sky Scanner theme: the inks of an FAA VFR sectional chart. Chart-paper
+# white, a pale terrain tint for the sidebar and widgets, chart ink for text,
+# airway magenta as the single accent and airspace blue for links. Dark mode
+# is the same chart at night. Contrast: text 15:1, links 6.6:1, white on the
+# magenta button 6.9:1; dark accent 3.6:1 on its background (UI component).
+# Chart series colours are validated separately (lib/fmt.py).
+
+[theme]
+font = "'Public Sans':https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+headingFont = "'Barlow Semi Condensed':https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&display=swap"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "small"
+showSidebarBorder = true
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#A3236F"
+backgroundColor = "#FAFBF8"
+secondaryBackgroundColor = "#EDEFE6"
+textColor = "#1B2330"
+linkColor = "#1F5AA6"
+borderColor = "#D5D8CC"
+dataframeHeaderBackgroundColor = "#EDEFE6"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
+chartSequentialColors = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#5598e7", "#2a78d6", "#256abf", "#1c5cab", "#104281", "#0d366b"]
+
+[theme.dark]
+primaryColor = "#C2408A"
+backgroundColor = "#141B24"
+secondaryBackgroundColor = "#1E2733"
+textColor = "#E6E9EE"
+linkColor = "#7FB0F0"
+borderColor = "#2E3A48"
+dataframeHeaderBackgroundColor = "#1E2733"
+chartCategoricalColors = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"]
+chartSequentialColors = ["#0d366b", "#104281", "#184f95", "#1c5cab", "#256abf", "#2a78d6", "#3987e5", "#5598e7", "#86b6ef", "#b7d3f6"]

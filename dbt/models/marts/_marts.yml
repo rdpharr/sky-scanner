@@ -1,0 +1,202 @@
+version: 2
+
+models:
+  - name: fct_snapshots
+    description: >
+      Every 15-second snapshot (deduplicated), partitioned by day on
+      bucket_start and clustered by address. Built incrementally. Columns as
+      in stg_aircraft_snapshots.
+    columns:
+      - name: snapshot_id
+        data_tests: [unique, not_null]
+      - name: latitude
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: -90, max_value: 90}, config: {severity: warn}}
+      - name: longitude
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: -180, max_value: 180}, config: {severity: warn}}
+      - name: altitude_baro_ft
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: -1500, max_value: 60000}, config: {severity: warn}}
+      - name: ground_speed_kt
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: 0, max_value: 800}, config: {severity: warn}}
+      - name: squawk
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "is null or regexp_contains(squawk, r'^[0-7]{4}$')"
+              config: {severity: warn}
+      - name: message_count
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: 1}}
+  - name: dim_aircraft
+    description: >
+      One row per aircraft address ever heard: resolved identity, class,
+      kind, military evidence and lifetime activity. The canonical answer to
+      "what aircraft is this?". Contains every owner name, including private
+      individuals: never expose directly; use pub_aircraft.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [address_type, address]
+    columns:
+      - name: is_confirmed
+        description: >
+          Canonical definition of an aircraft: an address heard in at least
+          var('confirmed_min_messages') (2) messages over all time.
+          Addresses heard once and never again are usually decoding errors.
+        data_tests: [not_null]
+      - name: aircraft_class
+        description: >
+          From ICAO Doc 8643: Helicopter (description H/G), Piston, Turboprop,
+          Wide-body jet (jet with wake category H/J), Narrow-body / regional
+          jet (airliner designator prefixes), Business jet (other jets),
+          Other, or Unidentified (no designator).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Narrow-body / regional jet', 'Wide-body jet', 'Business jet', 'Turboprop',
+                         'Piston', 'Helicopter', 'Other', 'Unidentified']
+      - name: aircraft_kind
+        description: >
+          Military (any military rule fired); Airline (airline callsign
+          prefix, airline-like owner or operator name, or an airliner owned
+          by a lessor or with no owner); otherwise Other.
+        data_tests:
+          - accepted_values: {arguments: {values: [Military, Airline, Other]}}
+      - name: type_name
+        description: Readable type name (curated list, else Doc 8643 manufacturer and model, else the source's description).
+      - name: identity_source
+        description: Highest-precedence source identifying the aircraft (faa_registry, tar1090_db, opensky, plane_alert_mil); null if unidentified.
+      - name: owner
+        description: Registered owner. May name a private individual; not public.
+      - name: registrant_category
+        description: FAA registrant type in words (Individual, Corporation, Government, LLC, ...).
+      - name: military_rules
+        description: Every military rule that fired (see int_military_classification).
+      - name: first_seen_at
+        description: First reception of any message from this address.
+      - name: last_seen_at
+        description: Latest reception of any message from this address.
+
+  - name: dim_aircraft_type
+    description: One row per ICAO type designator heard, with how many confirmed aircraft of the type were heard and a Wikipedia image.
+    columns:
+      - name: designator
+        data_tests: [unique, not_null]
+      - name: aircraft_heard
+        description: Confirmed aircraft of this type heard over all time. A measure of rarity here.
+
+  - name: fct_sightings
+    description: >
+      Canonical definition of a sighting: a run of one aircraft's snapshots,
+      across both bands, with no gap longer than var('sighting_gap_minutes')
+      (10 minutes). Includes flight-path features computed from positioned
+      snapshots.
+    columns:
+      - name: sighting_id
+        data_tests: [unique, not_null]
+      - name: address
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_aircraft'), field: address}}
+      - name: duration_minutes
+        description: Minutes from first to last reception in the sighting.
+      - name: positioned_snapshots
+        description: Snapshots in the sighting with a decoded position. Path features are null when this is 0.
+      - name: path_nm
+        description: Distance flown in nautical miles, summing segments between positions at most 2 minutes apart.
+      - name: displacement_nm
+        description: Straight-line distance between the first and last positions.
+      - name: circling_ratio
+        description: path_nm / displacement_nm when displacement exceeds 0.5 nm. Values well above 1 mean circling or pattern work.
+      - name: total_turn_deg
+        description: Sum of absolute track changes between snapshots at most 1 minute apart. 360 is one full turn.
+      - name: low_away_from_airport_snapshots
+        description: Positioned snapshots below 4,500 ft barometric, airborne, more than 5 nm from every airport in the local_airports seed.
+      - name: emergency_squawk
+        description: The aircraft squawked 7500, 7600 or 7700 during the sighting.
+
+  - name: agg_hourly_traffic
+    description: >
+      Traffic per UTC hour (aircraft by kind, sightings, messages) joined to
+      receiver listening time. Every hour since collection began has a row,
+      so outages show as low uptime rather than missing data.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [hour_start]
+
+  - name: agg_daily_mix
+    description: >
+      Confirmed aircraft and sightings per Pacific day by class, kind and
+      identity source; sums across rows are distinct aircraft counts.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [day, aircraft_class, aircraft_kind, identity_source]
+
+  - name: agg_daily_traffic
+    description: >
+      Daily traffic per band in Pacific time. Counts confirmed aircraft only.
+      Rates divide by hours actually spent listening on that band, so dwell
+      changes and outages do not distort comparisons.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [day, band_mhz]
+    columns:
+      - name: identification_rate
+        description: Share of the day's confirmed aircraft that any identity source identifies.
+      - name: messages_per_listening_hour
+        description: Messages received per hour spent listening on the band.
+
+  - name: fct_capture_intervals
+    description: Listening turns with the silent gap before each.
+    columns:
+      - name: capture_interval_id
+        data_tests: [unique, not_null]
+      - name: gap_before_seconds
+        description: Seconds between the previous turn's end and this turn's start (retuning, decoder start-up, outages).
+
+  - name: fct_receiver_uptime_hourly
+    description: Seconds spent listening on each band per UTC hour, clipped to hour boundaries.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [receiver_id, hour_start]
+    columns:
+      - name: uptime_ratio
+        description: Share of the hour spent listening on either band. Retuning keeps it below 1.0 even with no outage.
+        data_tests:
+          - dbt_utils.accepted_range: {arguments: {min_value: 0, max_value: 1.0001}}
+  - name: ops_dbt_runs
+    description: Scheduled dbt runs (hourly build, daily build, freshness) with their error and warning counts and bytes billed.
+  - name: ops_check_status
+    description: Current state of every test and source-freshness check over the last 7 days of scheduled runs.
+    columns:
+      - name: unique_id
+        data_tests: [unique, not_null]
+      - name: latest_status
+        description: pass, warn, fail or error for tests; pass, warn or error for sources.
+
+  - name: fct_notable_candidates
+    description: >
+      Candidates for the weekly notable-aircraft edition, one set per 7-day
+      window (window_start to window_end, Pacific dates): confirmed public
+      aircraft (LADD/PIA included and flagged) heard in the last 7 days with a positive
+      notable_score, its components and readable reasons. Scores rank
+      candidates for the agent to investigate; they are not the edition.
+    columns:
+      - name: notable_score
+        description: >
+          1.0 x emergency + 0.45 x type rarity + 0.20 x military + 0.15 x
+          vintage civil (built 1975 or earlier) + 0.20 x government/public-safety
+          + 0.25 x unusual path + 0.15 x frequency novelty + 0.10 x foreign
+          non-airline, multiplied by 0.3 for airliners without an emergency.
+      - name: path_score
+        description: Circling or low flying relative to the aircraft's own previous 28 days; null when no positions were decoded this week.
+      - name: frequency_score
+        description: First-ever, returning or spiking visits. Null until var('novelty_min_history_days') of collection (about 2026-11-21).
+      - name: reasons
+        description: Readable explanations of every signal that contributed.

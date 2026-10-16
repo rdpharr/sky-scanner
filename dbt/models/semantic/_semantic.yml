@@ -1,0 +1,151 @@
+version: 2
+
+models:
+  - name: metricflow_time_spine
+    description: One row per day for MetricFlow.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+
+semantic_models:
+  - name: snapshots
+    description: 15-second observations.
+    model: ref('fct_snapshots')
+    defaults: {agg_time_dimension: bucket_start}
+    entities:
+      - {name: snapshot, type: primary, expr: snapshot_id}
+      - {name: aircraft, type: foreign, expr: "concat(address_type, ':', address)"}
+    dimensions:
+      - {name: bucket_start, type: time, type_params: {time_granularity: day}}
+      - {name: band_mhz, type: categorical}
+    measures:
+      - {name: messages, description: Valid messages received., agg: sum, expr: message_count}
+      - {name: addresses_heard, description: Distinct addresses heard (confirmed or not)., agg: count_distinct, expr: "concat(address_type, ':', address)"}
+
+  - name: sightings
+    description: Runs of an aircraft's snapshots with no gap over 10 minutes.
+    model: ref('fct_sightings')
+    defaults: {agg_time_dimension: started_at}
+    entities:
+      - {name: sighting, type: primary, expr: sighting_id}
+      - {name: aircraft, type: foreign, expr: "concat(address_type, ':', address)"}
+    dimensions:
+      - {name: started_at, type: time, type_params: {time_granularity: day}}
+      - {name: emergency_squawk, type: categorical}
+    measures:
+      - {name: sightings, description: Sightings started., agg: count, expr: sighting_id}
+
+  - name: aircraft
+    description: Every aircraft address ever heard, with its resolved identity.
+    model: ref('dim_aircraft')
+    defaults: {agg_time_dimension: first_seen_at}
+    entities:
+      - {name: aircraft, type: primary, expr: "concat(address_type, ':', address)"}
+    dimensions:
+      - {name: first_seen_at, type: time, type_params: {time_granularity: day}}
+      - {name: is_confirmed, type: categorical}
+      - {name: is_military, type: categorical}
+      - {name: aircraft_class, type: categorical}
+      - {name: aircraft_kind, type: categorical}
+      - {name: identity_source, type: categorical}
+    measures:
+      - name: new_confirmed_aircraft
+        description: Confirmed aircraft first heard in the period.
+        agg: sum
+        expr: "case when is_confirmed then 1 else 0 end"
+      - name: new_identified_aircraft
+        description: Confirmed aircraft first heard in the period that a source identifies.
+        agg: sum
+        expr: "case when is_confirmed and identity_source is not null then 1 else 0 end"
+
+  - name: receiver_uptime
+    description: Listening time per UTC hour.
+    model: ref('fct_receiver_uptime_hourly')
+    defaults: {agg_time_dimension: hour_start}
+    entities:
+      - {name: receiver_hour, type: primary, expr: "concat(receiver_id, '|', cast(hour_start as string))"}
+    dimensions:
+      - {name: hour_start, type: time, type_params: {time_granularity: day}}
+    measures:
+      - {name: listening_hours, description: Hours spent listening on either band., agg: sum, expr: "listening_seconds / 3600"}
+      - {name: clock_hours, description: Wall-clock hours covered., agg: sum, expr: "1"}
+
+metrics:
+  - name: confirmed_aircraft_heard
+    label: Aircraft heard
+    description: >
+      Distinct confirmed aircraft heard in the period. Canonical definition of
+      an aircraft: an address heard in at least 2 messages over all time;
+      single-message addresses are usually decoding errors.
+    type: simple
+    type_params: {measure: addresses_heard}
+    filter: "{{ Dimension('aircraft__is_confirmed') }} = true"
+
+  - name: military_aircraft_heard
+    label: Military aircraft heard
+    description: Distinct confirmed aircraft heard in the period that any military rule classifies as military (see int_military_classification).
+    type: simple
+    type_params: {measure: addresses_heard}
+    filter: "{{ Dimension('aircraft__is_confirmed') }} = true and {{ Dimension('aircraft__is_military') }} = true"
+
+  - name: messages
+    label: Messages received
+    description: Valid messages received across both bands.
+    type: simple
+    type_params: {measure: messages}
+
+  - name: sightings
+    label: Sightings
+    description: Sightings started in the period. A sighting is a run of one aircraft's snapshots, across both bands, with no gap longer than 10 minutes.
+    type: simple
+    type_params: {measure: sightings}
+
+  - name: new_aircraft
+    label: New aircraft
+    description: Confirmed aircraft heard for the first time in the period.
+    type: simple
+    type_params: {measure: new_confirmed_aircraft}
+
+  - name: new_identified_aircraft
+    label: New identified aircraft
+    description: New confirmed aircraft that any identity source identifies.
+    type: simple
+    type_params: {measure: new_identified_aircraft}
+
+  - name: identification_rate
+    label: Identification rate
+    description: Share of new confirmed aircraft that FAA, tar1090-db, OpenSky or plane-alert-db identifies.
+    type: ratio
+    type_params:
+      numerator: {name: new_identified_aircraft}
+      denominator: {name: new_aircraft}
+
+  - name: listening_hours
+    label: Listening hours
+    description: Hours the radio spent listening on either band. Retuning gaps between turns are excluded.
+    type: simple
+    type_params: {measure: listening_hours}
+
+  - name: clock_hours
+    label: Clock hours
+    description: Wall-clock hours covered by listening data.
+    type: simple
+    type_params: {measure: clock_hours}
+
+  - name: receiver_uptime
+    label: Receiver uptime
+    description: Listening hours divided by wall-clock hours. Below 1.0 even with no outage because of retuning gaps (about 1 s per turn).
+    type: ratio
+    type_params:
+      numerator: {name: listening_hours}
+      denominator: {name: clock_hours}
+
+  - name: messages_per_listening_hour
+    label: Messages per listening hour
+    description: Messages received per hour actually spent listening, so dwell changes and outages do not distort comparisons.
+    type: ratio
+    type_params:
+      numerator: {name: messages}
+      denominator: {name: listening_hours}

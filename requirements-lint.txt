@@ -1,0 +1,4 @@
+# Linters and formatters, pinned so CI and local runs agree (see pyproject.toml
+# and dbt/.sqlfluff for their configuration).
+ruff==0.17.1
+sqlfluff==4.4.0
