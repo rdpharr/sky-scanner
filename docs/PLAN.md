@@ -571,8 +571,23 @@ for the Phase 2 parity check.
     Sep 26, so the page says how much history it covers rather than
     implying long-run trends.
   - Every chart links to its metric in the Definitions page.
-- **UI/UX pass** across every page using Anthropic's `frontend-design`
-  skill:
+- **UI/UX pass** across every page. Presentation matters more than search
+  ranking, so SEO is out of scope. Skills, each with one job:
+  - **`frontend-design`** (Anthropic) sets the visual direction: palette,
+    type, tone and the landing page's first impression.
+  - **`developing-with-streamlit`** (Streamlit's official skill, bundled
+    with the pinned `streamlit==1.66.0`) implements it with native
+    elements: `config.toml` theme tokens, `st.navigation`, bordered metric
+    cards, fragments and skeletons for loading, `alt=` on charts.
+    `frontend-design` favours custom CSS; Streamlit's skill forbids it
+    because selectors break on upgrade. Resolve by expressing the design
+    as theme tokens, allowing CSS only in one deliberate, isolated place
+    (e.g. the landing header), and keeping the Streamlit version pinned.
+  - **`dataviz`** for every chart, especially the Trends page: chart
+    choice, the palette validator, light and dark mode, stat tiles.
+  - **Design plugin** (Anthropic) as the review pass before launch:
+    `design-critique` and `accessibility-review` per page, `ux-copy` for
+    labels, empty states and errors. Findings are fixed in this phase.
   - Consistent Streamlit theme (`.streamlit/config.toml`), typography,
     spacing and chart palette; one shared page header and footer with data
     freshness and attribution.
