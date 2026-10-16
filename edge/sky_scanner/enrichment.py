@@ -13,12 +13,12 @@ import hashlib
 import io
 import re
 import zipfile
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 FAA_REGISTRY_URL = (
-    "https://www.faa.gov/licenses_certificates/aircraft_certification/"
-    "aircraft_registry/releasable_aircraft_download"
+    "https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/releasable_aircraft_download"
 )
 
 
@@ -51,10 +51,9 @@ def _key(value: str) -> str:
 def _header_map(row: list[str]) -> dict[str, int] | None:
     keys = [_key(cell) for cell in row]
     master_header = any(k in {"NNUMBER", "REGISTRATION", "MODESCODEHEX", "MODESCODE"} for k in keys)
-    reference_header = (
-        any(k in {"CODE", "AIRCRAFTMANUFACTURERMODELCODE", "AIRCRAFTMANUFACTURERMODELANDSERIESCODE"} for k in keys)
-        and any(k in {"MFR", "MANUFACTURER", "MANUFACTURERNAME", "AIRCRAFTMANUFACTURERNAME"} for k in keys)
-    )
+    reference_header = any(
+        k in {"CODE", "AIRCRAFTMANUFACTURERMODELCODE", "AIRCRAFTMANUFACTURERMODELANDSERIESCODE"} for k in keys
+    ) and any(k in {"MFR", "MANUFACTURER", "MANUFACTURERNAME", "AIRCRAFTMANUFACTURERNAME"} for k in keys)
     if not (master_header or reference_header):
         return None
     return {key: i for i, key in enumerate(keys) if key}
@@ -96,8 +95,11 @@ def _rows(data: bytes, kind: str) -> tuple[dict[str, int] | None, list[list[str]
         return headers, parsed[1:]
     keys = {_key(cell) for cell in parsed[0]}
     looks_like_header = (
-        "SERIALNUMBER" in keys or "NNUMBER" in keys or "REGISTRATION" in keys
-        or "TYPEACFT" in keys or "TCDATASHEET" in keys
+        "SERIALNUMBER" in keys
+        or "NNUMBER" in keys
+        or "REGISTRATION" in keys
+        or "TYPEACFT" in keys
+        or "TCDATASHEET" in keys
     )
     if looks_like_header:
         raise ValueError(f"malformed FAA {kind.upper()} header")
@@ -150,26 +152,46 @@ def parse_faa_registry(
         raise ValueError("FAA registry ZIP missing required file(s): " + ", ".join(missing))
 
     if retrieved_at is None:
-        retrieved = datetime.now(timezone.utc)
+        retrieved = datetime.now(UTC)
     elif isinstance(retrieved_at, str):
         retrieved = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
     else:
         retrieved = retrieved_at
     if retrieved.tzinfo is None:
-        retrieved = retrieved.replace(tzinfo=timezone.utc)
-    retrieved_text = retrieved.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        retrieved = retrieved.replace(tzinfo=UTC)
+    retrieved_text = retrieved.astimezone(UTC).isoformat().replace("+00:00", "Z")
     dataset_hash = hashlib.sha256(payload).hexdigest()
 
     reference_headers, reference_rows = _rows(zf.read(members["ACFTREF.TXT"]), "reference")
     references: dict[str, dict[str, str | None]] = {}
     for row in reference_rows:
-        code = _col(row, reference_headers, ("CODE", "MFR MDL CODE", "AIRCRAFT MFR MODEL CODE", "AIRCRAFT MANUFACTURER MODEL CODE", "AIRCRAFT MANUFACTURER MODEL AND SERIES CODE"), 0)
+        code = _col(
+            row,
+            reference_headers,
+            (
+                "CODE",
+                "MFR MDL CODE",
+                "AIRCRAFT MFR MODEL CODE",
+                "AIRCRAFT MANUFACTURER MODEL CODE",
+                "AIRCRAFT MANUFACTURER MODEL AND SERIES CODE",
+            ),
+            0,
+        )
         if not code:
             continue
         references[code.strip()] = {
-            "manufacturer": _optional(_col(row, reference_headers, ("MFR", "MANUFACTURER", "MANUFACTURER NAME", "AIRCRAFT MANUFACTURER NAME"), 1)),
+            "manufacturer": _optional(
+                _col(
+                    row,
+                    reference_headers,
+                    ("MFR", "MANUFACTURER", "MANUFACTURER NAME", "AIRCRAFT MANUFACTURER NAME"),
+                    1,
+                )
+            ),
             "model": _optional(_col(row, reference_headers, ("MODEL", "MODEL NAME"), 2)),
-            "aircraft_type": _optional(_col(row, reference_headers, ("TYPE-ACFT", "TYPE AIRCRAFT", "AIRCRAFT TYPE"), 3)),
+            "aircraft_type": _optional(
+                _col(row, reference_headers, ("TYPE-ACFT", "TYPE AIRCRAFT", "AIRCRAFT TYPE"), 3)
+            ),
         }
 
     master_headers, master_rows = _rows(zf.read(members["MASTER.TXT"]), "master")
@@ -183,26 +205,30 @@ def parse_faa_registry(
         icao = normalize_icao(hex_value)
         if not registration or not icao or icao in seen:
             continue
-        code = _col(row, master_headers, ("MFR MDL CODE", "AIRCRAFT MFR MODEL CODE", "AIRCRAFT MANUFACTURER MODEL CODE"), 2)
+        code = _col(
+            row, master_headers, ("MFR MDL CODE", "AIRCRAFT MFR MODEL CODE", "AIRCRAFT MANUFACTURER MODEL CODE"), 2
+        )
         owner = _optional(_col(row, master_headers, ("NAME", "REGISTRANT NAME", "REGISTRANT'S NAME", "OWNER"), 6))
         # FAA codes: 1 individual, 2 partnership, 3 corporation, 4 co-owned,
         # 5 government, 7 LLC, 8 non-citizen corporation, 9 non-citizen co-owned.
         registrant = _col(row, master_headers, ("TYPE REGISTRANT", "REGISTRANT TYPE"), 5)
         year = _col(row, master_headers, ("YEAR MFR", "YEAR MANUFACTURED"), 4)
         metadata = references.get(code, {})
-        results.append({
-            "icao_address": icao,
-            "registration": registration,
-            "manufacturer": metadata.get("manufacturer"),
-            "model": metadata.get("model"),
-            "aircraft_type": metadata.get("aircraft_type"),
-            "registered_owner": owner,
-            "registrant_type": registrant if re.fullmatch(r"[1-9]", registrant) else None,
-            "year_mfr": int(year) if re.fullmatch(r"(19|20)\d\d", year) else None,
-            "operator": None,
-            "source_url": source_url,
-            "retrieved_at": retrieved_text,
-            "dataset_hash": dataset_hash,
-        })
+        results.append(
+            {
+                "icao_address": icao,
+                "registration": registration,
+                "manufacturer": metadata.get("manufacturer"),
+                "model": metadata.get("model"),
+                "aircraft_type": metadata.get("aircraft_type"),
+                "registered_owner": owner,
+                "registrant_type": registrant if re.fullmatch(r"[1-9]", registrant) else None,
+                "year_mfr": int(year) if re.fullmatch(r"(19|20)\d\d", year) else None,
+                "operator": None,
+                "source_url": source_url,
+                "retrieved_at": retrieved_text,
+                "dataset_hash": dataset_hash,
+            }
+        )
         seen.add(icao)
     return results

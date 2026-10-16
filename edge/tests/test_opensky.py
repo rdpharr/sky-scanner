@@ -2,7 +2,7 @@ import csv
 import hashlib
 import io
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from sky_scanner import opensky
@@ -11,21 +11,44 @@ from sky_scanner.enrich_worker import OpenSkyWorker, run_forever
 S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
 
 OPENSKY_HEADER = [
-    "icao24", "timestamp", "acars", "adsb", "built", "categoryDescription",
-    "country", "engines", "firstFlightDate", "firstSeen", "icaoAircraftClass",
-    "lineNumber", "manufacturerIcao", "manufacturerName", "model", "modes",
-    "nextReg", "notes", "operator", "operatorCallsign", "operatorIata",
-    "operatorIcao", "owner", "prevReg", "regUntil", "registered",
-    "registration", "selCal", "serialNumber", "status", "typecode", "vdl",
+    "icao24",
+    "timestamp",
+    "acars",
+    "adsb",
+    "built",
+    "categoryDescription",
+    "country",
+    "engines",
+    "firstFlightDate",
+    "firstSeen",
+    "icaoAircraftClass",
+    "lineNumber",
+    "manufacturerIcao",
+    "manufacturerName",
+    "model",
+    "modes",
+    "nextReg",
+    "notes",
+    "operator",
+    "operatorCallsign",
+    "operatorIata",
+    "operatorIcao",
+    "owner",
+    "prevReg",
+    "regUntil",
+    "registered",
+    "registration",
+    "selCal",
+    "serialNumber",
+    "status",
+    "typecode",
+    "vdl",
 ]
 
 
 def _s3_listing(keys):
     contents = "".join(f"<Contents><Key>{key}</Key></Contents>" for key in keys)
-    xml = (
-        f'<?xml version="1.0" encoding="UTF-8"?>'
-        f'<ListBucketResult xmlns="{S3_NS}">{contents}</ListBucketResult>'
-    )
+    xml = f'<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="{S3_NS}">{contents}</ListBucketResult>'
     return xml.encode("utf-8")
 
 
@@ -47,53 +70,61 @@ def _csv_bytes(rows: list[list], header: list[str] | None = None, extra_raw_line
     return text.encode("utf-8")
 
 
-KOREAN_AIR_ROW = _row({
-    "icao24": "71c010",
-    "timestamp": "2020-01-01 00:00:00",
-    "country": "Republic of Korea",
-    "icaoAircraftClass": "L2J",
-    "manufacturerIcao": "BOEING",
-    "manufacturerName": "Boeing",
-    "model": "Boeing 777-3B5ER",
-    "operator": "Korean Air",
-    "operatorIcao": "KAL",
-    "owner": "Korean Air",
-    "registration": "HL8010",
-    "typecode": "B77W",
-})
+KOREAN_AIR_ROW = _row(
+    {
+        "icao24": "71c010",
+        "timestamp": "2020-01-01 00:00:00",
+        "country": "Republic of Korea",
+        "icaoAircraftClass": "L2J",
+        "manufacturerIcao": "BOEING",
+        "manufacturerName": "Boeing",
+        "model": "Boeing 777-3B5ER",
+        "operator": "Korean Air",
+        "operatorIcao": "KAL",
+        "owner": "Korean Air",
+        "registration": "HL8010",
+        "typecode": "B77W",
+    }
+)
 
 
 def valid_snapshot_bytes(n: int = 1) -> bytes:
     rows = []
     for i in range(n):
-        rows.append(_row({
-            "icao24": f"{i:06x}",
-            "registration": f"N{i}",
-            "operator": "Test Air",
-            "typecode": "B77W",
-        }))
+        rows.append(
+            _row(
+                {
+                    "icao24": f"{i:06x}",
+                    "registration": f"N{i}",
+                    "operator": "Test Air",
+                    "typecode": "B77W",
+                }
+            )
+        )
     return _csv_bytes(rows)
 
 
 class LatestSnapshotUrlTests(unittest.TestCase):
     def test_picks_newest_complete_snapshot_ignoring_partial_and_readme(self):
-        listing = _s3_listing([
-            "metadata/aircraftDatabase-2024-01.csv",
-            "metadata/README.txt",
-            "metadata/aircraft-database-complete-2023-11.csv",
-            "metadata/aircraft-database-complete-2024-02.csv",
-            "metadata/aircraft-database-complete-2024-01.csv",
-        ])
-        url = opensky.latest_snapshot_url(listing)
-        self.assertEqual(
-            url, opensky.BUCKET_URL + "/metadata/aircraft-database-complete-2024-02.csv"
+        listing = _s3_listing(
+            [
+                "metadata/aircraftDatabase-2024-01.csv",
+                "metadata/README.txt",
+                "metadata/aircraft-database-complete-2023-11.csv",
+                "metadata/aircraft-database-complete-2024-02.csv",
+                "metadata/aircraft-database-complete-2024-01.csv",
+            ]
         )
+        url = opensky.latest_snapshot_url(listing)
+        self.assertEqual(url, opensky.BUCKET_URL + "/metadata/aircraft-database-complete-2024-02.csv")
 
     def test_no_matching_snapshot_raises(self):
-        listing = _s3_listing([
-            "metadata/aircraftDatabase-2024-01.csv",
-            "metadata/README.txt",
-        ])
+        listing = _s3_listing(
+            [
+                "metadata/aircraftDatabase-2024-01.csv",
+                "metadata/README.txt",
+            ]
+        )
         with self.assertRaises(ValueError):
             opensky.latest_snapshot_url(listing)
 
@@ -105,7 +136,7 @@ class LatestSnapshotUrlTests(unittest.TestCase):
 class ParseOpenskyDatabaseTests(unittest.TestCase):
     def test_valid_row_is_parsed_with_expected_fields(self):
         data = _csv_bytes([KOREAN_AIR_ROW])
-        retrieved = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        retrieved = datetime(2026, 1, 1, tzinfo=UTC)
         records = opensky.parse_opensky_database(
             data, source_url="https://example.test/snapshot.csv", retrieved_at=retrieved
         )
@@ -167,7 +198,6 @@ class ParseOpenskyDatabaseTests(unittest.TestCase):
 
     def test_wrong_column_count_rows_are_skipped(self):
         good = _row({"icao24": "abc123", "operator": "Good Op"})
-        header_line = ",".join(f"'{name}'" for name in OPENSKY_HEADER)
         # A raw line with far fewer fields than the header.
         short_line = "'def456','2020-01-01',0,0"
         data = _csv_bytes([good], extra_raw_lines=[short_line])
@@ -176,11 +206,13 @@ class ParseOpenskyDatabaseTests(unittest.TestCase):
         self.assertEqual(records[0]["icao_address"], "ABC123")
 
     def test_values_containing_commas_inside_quotes_parse_correctly(self):
-        row = _row({
-            "icao24": "abc123",
-            "operator": "Korean Air, Ltd",
-            "owner": "Trust, LLC",
-        })
+        row = _row(
+            {
+                "icao24": "abc123",
+                "operator": "Korean Air, Ltd",
+                "owner": "Trust, LLC",
+            }
+        )
         data = _csv_bytes([row])
         records = opensky.parse_opensky_database(data, source_url="u")
         self.assertEqual(len(records), 1)

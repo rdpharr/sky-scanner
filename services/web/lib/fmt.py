@@ -15,7 +15,7 @@ KIND_COLORS = {
     "Other": [201, 133, 0],
     None: [140, 140, 140],
 }
-KIND_HEX = {k: "#%02x%02x%02x" % tuple(v) for k, v in KIND_COLORS.items() if k}
+KIND_HEX = {k: "#{:02x}{:02x}{:02x}".format(*v) for k, v in KIND_COLORS.items() if k}
 
 # Categorical series colours in a fixed order (never cycled), with steps
 # for each theme. The order is the one validated for adjacent series.

@@ -2,12 +2,19 @@
 -- identity source. Each aircraft has one class, kind and source, so summing
 -- aircraft across any of them gives the day's distinct aircraft.
 with heard as (
-    select distinct date(bucket_start, 'America/Los_Angeles') as day, address_type, address
+    select distinct
+        date(bucket_start, 'America/Los_Angeles') as day,
+        address_type,
+        address
     from {{ ref('fct_snapshots') }}
 ),
 
 sightings as (
-    select date(started_at, 'America/Los_Angeles') as day, address_type, address, count(*) as sightings
+    select
+        date(started_at, 'America/Los_Angeles') as day,
+        address_type,
+        address,
+        count(*) as sightings
     from {{ ref('fct_sightings') }}
     group by day, address_type, address
 )

@@ -59,7 +59,8 @@ class UatNormalizationTests(unittest.TestCase):
     def test_missing_position_and_received_time_fallback(self):
         row = normalize_uat(
             {"address_qualifier": "adsb_icao", "address": "ABCDEF", "metadata": {"rssi": -22}},
-            "receiver", received_at=123.25,
+            "receiver",
+            received_at=123.25,
         )
         self.assertEqual(row["received_at"], 123.25)
         self.assertNotIn("latitude", row["fields"])
@@ -69,9 +70,9 @@ class UatNormalizationTests(unittest.TestCase):
         for state, expected in (("airborne", False), ("supersonic", False), ("ground", True)):
             with self.subTest(state=state):
                 row = normalize_uat(
-                    {"address_qualifier": "adsb_icao", "address": "ABCDEF",
-                     "airground_state": state},
-                    "rx", received_at=1,
+                    {"address_qualifier": "adsb_icao", "address": "ABCDEF", "airground_state": state},
+                    "rx",
+                    received_at=1,
                 )
                 self.assertEqual(row["fields"]["on_ground"], expected)
 

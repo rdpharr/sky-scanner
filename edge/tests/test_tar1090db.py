@@ -55,10 +55,15 @@ class ParseTests(unittest.TestCase):
         self.assertNotIn("AAAAAA", table)
 
     def test_first_duplicate_wins(self):
-        data = _gzip(_rows_text([
-            "bbbbbb;N1;B738;00;FIRST;;;",
-            "BBBBBB;N2;B739;00;SECOND;;;",
-        ] + SAMPLE_ROWS))
+        data = _gzip(
+            _rows_text(
+                [
+                    "bbbbbb;N1;B738;00;FIRST;;;",
+                    "BBBBBB;N2;B739;00;SECOND;;;",
+                ]
+                + SAMPLE_ROWS
+            )
+        )
         _, table = tar1090db.parse(data)
         self.assertEqual(table["BBBBBB"], ("N1", "B738", "00", "FIRST", None, None))
 
@@ -89,8 +94,7 @@ class RecordsTests(unittest.TestCase):
         self.digest, self.table = tar1090db.parse(data)
 
     def test_only_observed_addresses_present_in_table_are_returned_sorted(self):
-        result = tar1090db.records(
-            self.table, ["ae0000", "A8F5D1", "FFFFFF"], dataset_hash=self.digest)
+        result = tar1090db.records(self.table, ["ae0000", "A8F5D1", "FFFFFF"], dataset_hash=self.digest)
         self.assertEqual([r["icao_address"] for r in result], ["A8F5D1", "AE0000"])
 
     def test_tags_from_flags(self):

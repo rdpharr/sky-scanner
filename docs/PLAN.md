@@ -710,6 +710,31 @@ E190 and the TransMedics Phenom 300s (corporate fleets).
   Commons credits trimmed to the author. LLC owners stay named (owner's
   decision).
 
+- **Repository cleanup:**
+  - LAN website removed (`web.py`, `aircraft_log.html`, the `web` Compose
+    service, its tests); the worker's identity code kept as
+    `edge/sky_scanner/identity.py`. `demo.py` and `sql/explore.sql` removed.
+    `edge/SPEC.md` and `edge/STATUS.md` folded into `edge/README.md`.
+  - ruff (format and lint, `pyproject.toml`), sqlfluff (BigQuery dialect,
+    jinja templater with lint-time stubs for `dbt_utils`, `target` and
+    `run_query`, so CI needs no warehouse) and `terraform fmt`, pinned in
+    `requirements-lint.txt` and run in CI with tests for web, MCP and the
+    notable job. Linting found a real bug: two columns shared one doc
+    block, so `pub_definitions.model` was described as the edition's model.
+  - SQL reformatting verified: compiled SQL identical before and after
+    except five intended edits; all 86 models and tests dry-run on
+    BigQuery; a production build passed. (The capitalisation rule had
+    lowercased `INFORMATION_SCHEMA`, which BigQuery rejects; caught by the
+    dry runs and restored.)
+  - New top-level README with live links, screenshots and architecture;
+    MIT license; GitHub description, website and topics set;
+    `docs/images/social-preview.png` ready to upload (Settings → Social
+    preview).
+
+**Left:** the design-plugin review pass (`design-critique`,
+`accessibility-review`, `ux-copy`) once its skills are available here; a
+busier-hour screenshot of the Live page.
+
 Comes before launch: the repository goes public and the application goes
 in only after this phase. It starts once Phases 4–6 have pages and the LAN page is no longer needed
 for the Phase 2 parity check.

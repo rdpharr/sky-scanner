@@ -33,9 +33,7 @@ class SnapshotTests(unittest.TestCase):
         acc.add_observation(obs(30, fields={"speed_kt": 210}))
         acc.add_observation(obs(45, fields={"track_deg": 90}))
         rows = acc.flush_all()
-        self.assertEqual(rows[1]["fields"]["callsign"], {
-            "value": "A1", "timestamp": 0.0, "source": "decoder"
-        })
+        self.assertEqual(rows[1]["fields"]["callsign"], {"value": "A1", "timestamp": 0.0, "source": "decoder"})
         self.assertNotIn("callsign", rows[3]["fields"])
 
     def test_frequency_address_type_receiver_are_independent(self):
@@ -69,9 +67,7 @@ class SnapshotTests(unittest.TestCase):
         acc = SnapshotAccumulator()
         for timestamp in (2, float("inf"), float("nan")):
             with self.subTest(timestamp=timestamp), self.assertRaises(ValueError):
-                acc.add_observation(obs(1, fields={"x": {
-                    "value": 1, "timestamp": timestamp, "source": "decoder"
-                }}))
+                acc.add_observation(obs(1, fields={"x": {"value": 1, "timestamp": timestamp, "source": "decoder"}}))
 
     def test_expired_identity_carry_is_cleaned_and_late_data_stays_rejected(self):
         acc = SnapshotAccumulator(carry_seconds=15)

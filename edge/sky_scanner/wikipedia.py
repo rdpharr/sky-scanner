@@ -16,19 +16,47 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 API = "https://en.wikipedia.org/w/api.php"
 SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 DESIGNATOR_PAGE = "List_of_aircraft_type_designators"
-USER_AGENT = ("SkyScanner/1.0 (personal receive-only ADS-B station; "
-              "one cached lookup per aircraft type; https://github.com/rdpharr/sky-scanner)")
+USER_AGENT = (
+    "SkyScanner/1.0 (personal receive-only ADS-B station; "
+    "one cached lookup per aircraft type; https://github.com/rdpharr/sky-scanner)"
+)
 AIRCRAFT_WORDS = re.compile(
     r"aircraft|airliner|airplane|aeroplane|jet|helicopter|rotorcraft|turboprop|glider|"
-    r"trainer|bomber|fighter|tanker|transport|seaplane|flying boat|tiltrotor|airlifter", re.I)
-GENERIC_WORDS = {"AIR", "AIRCRAFT", "AIRPLANE", "AEROSPACE", "AMERICA", "AMERICAN", "AVIATION", "CANADA", "COMPANY",
-                 "CORP", "CORPORATION", "DESIGN", "HELICOPTER", "HELICOPTERS", "INC", "INDUSTRIES", "INTERNATIONAL",
-                 "LIMITED", "LLC", "LTD", "MANUFACTURING", "NORTH", "TEXTRON", "THE"}
+    r"trainer|bomber|fighter|tanker|transport|seaplane|flying boat|tiltrotor|airlifter",
+    re.I,
+)
+GENERIC_WORDS = {
+    "AIR",
+    "AIRCRAFT",
+    "AIRPLANE",
+    "AEROSPACE",
+    "AMERICA",
+    "AMERICAN",
+    "AVIATION",
+    "CANADA",
+    "COMPANY",
+    "CORP",
+    "CORPORATION",
+    "DESIGN",
+    "HELICOPTER",
+    "HELICOPTERS",
+    "INC",
+    "INDUSTRIES",
+    "INTERNATIONAL",
+    "LIMITED",
+    "LLC",
+    "LTD",
+    "MANUFACTURING",
+    "NORTH",
+    "TEXTRON",
+    "THE",
+}
 COMMONS_IMAGE = re.compile(r"^https://(upload|thumb)\.wikimedia\.org/wikipedia/commons/")
 
 
@@ -38,8 +66,7 @@ def _strip_query(url: str | None) -> str | None:
 
 
 def _get_json(url: str, timeout: int = 30) -> Any:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
-                                                   "Accept": "application/json"})
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read(5 * 1024 * 1024))
 
@@ -59,9 +86,13 @@ def parse_designator_list(page_html: str) -> dict[str, str]:
 
 
 def fetch_designator_list(get_json: Callable[[str], Any] = _get_json) -> dict[str, str]:
-    url = API + "?" + urllib.parse.urlencode({
-        "action": "parse", "page": DESIGNATOR_PAGE, "prop": "text",
-        "format": "json", "formatversion": 2})
+    url = (
+        API
+        + "?"
+        + urllib.parse.urlencode(
+            {"action": "parse", "page": DESIGNATOR_PAGE, "prop": "text", "format": "json", "formatversion": 2}
+        )
+    )
     return parse_designator_list(get_json(url)["parse"]["text"])
 
 
@@ -86,9 +117,20 @@ def names_same_model(query: str, title: str) -> bool:
 
 
 def search_title(query: str, get_json: Callable[[str], Any] = _get_json) -> str | None:
-    url = API + "?" + urllib.parse.urlencode({
-        "action": "query", "list": "search", "srsearch": f"{query} aircraft",
-        "srlimit": 1, "srnamespace": 0, "format": "json"})
+    url = (
+        API
+        + "?"
+        + urllib.parse.urlencode(
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": f"{query} aircraft",
+                "srlimit": 1,
+                "srnamespace": 0,
+                "format": "json",
+            }
+        )
+    )
     hits = get_json(url).get("query", {}).get("search", [])
     return hits[0]["title"] if hits else None
 
@@ -113,13 +155,13 @@ def summary(title: str, get_json: Callable[[str], Any] = _get_json) -> dict[str,
         "article_url": ((data.get("content_urls") or {}).get("desktop") or {}).get("page")
         or f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}",
         "image_url": image if free else None,
-        "file_url": f"https://commons.wikimedia.org/wiki/File:{urllib.parse.quote(file_name)}"
-        if file_name else None,
+        "file_url": f"https://commons.wikimedia.org/wiki/File:{urllib.parse.quote(file_name)}" if file_name else None,
     }
 
 
-def resolve(designator: str, model_name: str | None, designators: dict[str, str],
-            get_json: Callable[[str], Any] = _get_json) -> tuple[str, dict[str, Any] | None]:
+def resolve(
+    designator: str, model_name: str | None, designators: dict[str, str], get_json: Callable[[str], Any] = _get_json
+) -> tuple[str, dict[str, Any] | None]:
     """Return (method, result) for one type; result None when nothing suitable."""
     title = designators.get(designator.upper())
     if title:

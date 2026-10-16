@@ -9,7 +9,6 @@ descriptions from BigQuery, so state units, time zones and null meaning.
 from __future__ import annotations
 
 import csv
-import re
 import sys
 from pathlib import Path
 
@@ -153,7 +152,6 @@ COLUMNS = {
     "generated_at": "When the agent wrote the edition (UTC).",
     "purpose": "weekly (published on the website), eval (written to measure the agent) or test.",
     "status": "published, rejected (too few statements verified), eval or test.",
-    "model": "OpenRouter model that wrote the edition.",
     "edition": "The verified edition: title, summary, sections with entries, privacy and caveats. Every statement carries the evidence (tool call, path, value) it was verified against.",
     "photos": "Wikipedia/Wikimedia Commons photo per type designator, with author and license.",
     "statements_checked": "Statements in the agent's draft.",
@@ -207,7 +205,10 @@ OVERRIDES = {
     ("pub_sightings", "is_confirmed"): "True when the aircraft is confirmed (2+ messages over all time).",
     ("pub_daily_traffic", "snapshots"): "15-second snapshots recorded that day on the band.",
     ("pub_daily_traffic", "messages"): "Messages received that day on the band.",
-    ("pub_daily_traffic", "listening_seconds"): "Seconds spent listening on the band that day (turns started that day, Pacific time).",
+    (
+        "pub_daily_traffic",
+        "listening_seconds",
+    ): "Seconds spent listening on the band that day (turns started that day, Pacific time).",
     ("pub_daily_traffic", "band_mhz"): "Receive band, MHz: 1090 or 978.",
     ("pub_receiver_uptime_hourly", "listening_seconds"): "Seconds spent listening on either band in the hour.",
     ("pub_dbt_runs", "started_at"): "When the run started (UTC).",
@@ -215,28 +216,53 @@ OVERRIDES = {
     ("pub_aircraft_types", "last_seen_at"): "Latest time any public aircraft of the type was heard (UTC).",
     ("pub_definitions", "description"): "Canonical definition text.",
     ("pub_eval_runs", "started_at"): "When the evaluation ran (UTC).",
-    ("pub_eval_runs", "kind"): "qa (factual questions graded against gold SQL) or edition_recall (reference items an edition covered).",
+    (
+        "pub_eval_runs",
+        "kind",
+    ): "qa (factual questions graded against gold SQL) or edition_recall (reference items an edition covered).",
     ("pub_eval_runs", "model"): "OpenRouter model evaluated.",
-    ("pub_eval_runs", "cost_usd"): "OpenRouter cost of the run (for edition_recall, of the edition evaluated), US dollars.",
+    ("pub_notable_editions", "model"): "OpenRouter model that wrote the edition.",
+    (
+        "pub_eval_runs",
+        "cost_usd",
+    ): "OpenRouter cost of the run (for edition_recall, of the edition evaluated), US dollars.",
     ("pub_eval_runs", "seconds"): "Wall-clock seconds the run took.",
-    ("pub_hourly_traffic", "hour_start"): "Start of the UTC hour. Every hour since collection began has a row, including hours the receiver was off.",
+    (
+        "pub_hourly_traffic",
+        "hour_start",
+    ): "Start of the UTC hour. Every hour since collection began has a row, including hours the receiver was off.",
     ("pub_hourly_traffic", "day_pt"): "Pacific (America/Los_Angeles) date of the hour.",
     ("pub_hourly_traffic", "hour_pt"): "Pacific hour of day, 0-23.",
     ("pub_hourly_traffic", "weekday_pt"): "Pacific day of the week, e.g. 'Monday'.",
     ("pub_hourly_traffic", "listening_seconds"): "Seconds spent listening on either band in the hour.",
-    ("pub_hourly_traffic", "uptime_ratio"): "Share of the hour spent listening on either band. About 0.98 when running normally (retuning between bands); below 0.8 means an outage, so counts for that hour understate traffic.",
+    (
+        "pub_hourly_traffic",
+        "uptime_ratio",
+    ): "Share of the hour spent listening on either band. About 0.98 when running normally (retuning between bands); below 0.8 means an outage, so counts for that hour understate traffic.",
     ("pub_hourly_traffic", "confirmed_aircraft"): "Distinct confirmed aircraft heard in the hour, either band.",
     ("pub_hourly_traffic", "airline_aircraft"): "Distinct confirmed aircraft of kind Airline heard in the hour.",
     ("pub_hourly_traffic", "military_aircraft"): "Distinct confirmed aircraft of kind Military heard in the hour.",
-    ("pub_hourly_traffic", "other_aircraft"): "Distinct confirmed aircraft of kind Other (general aviation, business, government civil) heard in the hour.",
+    (
+        "pub_hourly_traffic",
+        "other_aircraft",
+    ): "Distinct confirmed aircraft of kind Other (general aviation, business, government civil) heard in the hour.",
     ("pub_hourly_traffic", "sightings_started"): "Sightings of confirmed aircraft that started in the hour.",
     ("pub_hourly_traffic", "messages"): "Messages received in the hour from confirmed aircraft, either band.",
-    ("pub_hourly_traffic", "aircraft_per_listening_hour"): "confirmed_aircraft divided by listening hours: comparable across hours with different uptime. Null when the receiver did not listen.",
+    (
+        "pub_hourly_traffic",
+        "aircraft_per_listening_hour",
+    ): "confirmed_aircraft divided by listening hours: comparable across hours with different uptime. Null when the receiver did not listen.",
     ("pub_daily_mix", "day"): "Calendar day in Pacific time (America/Los_Angeles).",
     ("pub_daily_mix", "aircraft_class"): "Aircraft class (see pub_aircraft.aircraft_class).",
     ("pub_daily_mix", "aircraft_kind"): "Military, Airline or Other (see pub_aircraft.aircraft_kind).",
-    ("pub_daily_mix", "identity_source"): "Highest-precedence source identifying the aircraft (faa_registry, tar1090_db, opensky, plane_alert_mil), or 'Unidentified'.",
-    ("pub_daily_mix", "confirmed_aircraft"): "Distinct confirmed aircraft heard that day with this class, kind and source. Each aircraft falls in one row per day, so sums across rows are distinct counts.",
+    (
+        "pub_daily_mix",
+        "identity_source",
+    ): "Highest-precedence source identifying the aircraft (faa_registry, tar1090_db, opensky, plane_alert_mil), or 'Unidentified'.",
+    (
+        "pub_daily_mix",
+        "confirmed_aircraft",
+    ): "Distinct confirmed aircraft heard that day with this class, kind and source. Each aircraft falls in one row per day, so sums across rows are distinct counts.",
     ("pub_daily_mix", "sightings"): "Sightings that started that day by those aircraft.",
 }
 
@@ -248,10 +274,15 @@ def block_name(model: str, column: str) -> str:
 
 
 def main(columns_csv: str) -> None:
-    rows = list(csv.DictReader(open(columns_csv)))
-    missing = sorted({r["column_name"] for r in rows
-                      if (r["table_name"], r["column_name"]) not in OVERRIDES
-                      and r["column_name"] not in COLUMNS})
+    with open(columns_csv) as f:
+        rows = list(csv.DictReader(f))
+    missing = sorted(
+        {
+            r["column_name"]
+            for r in rows
+            if (r["table_name"], r["column_name"]) not in OVERRIDES and r["column_name"] not in COLUMNS
+        }
+    )
     if missing:
         sys.exit(f"undocumented columns: {missing}")
 
@@ -269,8 +300,10 @@ def main(columns_csv: str) -> None:
     for model in doc["models"]:
         if model["name"] not in by_model:
             continue  # not in the input: keep its existing column docs
-        model["columns"] = [{"name": c, "description": f"{{{{ doc('{block_name(model['name'], c)}') }}}}"}
-                            for c in by_model[model["name"]]]
+        model["columns"] = [
+            {"name": c, "description": f"{{{{ doc('{block_name(model['name'], c)}') }}}}"}
+            for c in by_model[model["name"]]
+        ]
     header = "# Column descriptions are generated by scripts/column_docs.py.\n"
     path.write_text(header + yaml.safe_dump(doc, sort_keys=False, width=100, allow_unicode=True))
     print(f"{len(blocks)} doc blocks; {sum(len(v) for v in by_model.values())} public columns documented")

@@ -4,9 +4,10 @@ import urllib.parse
 
 from sky_scanner import wikipedia
 
-
-ROW = ('<tr><td>B738</td><td>738</td><td><a href="/wiki/Boeing_737_Next_Generation" '
-       'title="Boeing 737 Next Generation">Boeing 737-800</a></td></tr>')
+ROW = (
+    '<tr><td>B738</td><td>738</td><td><a href="/wiki/Boeing_737_Next_Generation" '
+    'title="Boeing 737 Next Generation">Boeing 737-800</a></td></tr>'
+)
 
 
 class ParseDesignatorListTests(unittest.TestCase):
@@ -15,8 +16,7 @@ class ParseDesignatorListTests(unittest.TestCase):
         self.assertEqual(result, {"B738": "Boeing 737 Next Generation"})
 
     def test_first_title_per_designator_is_kept(self):
-        second = ('<tr><td>B738</td><td>738</td><td><a href="/wiki/Other" '
-                  'title="Some Other Title">Other</a></td></tr>')
+        second = '<tr><td>B738</td><td>738</td><td><a href="/wiki/Other" title="Some Other Title">Other</a></td></tr>'
         result = wikipedia.parse_designator_list(f"<table>{ROW}{second}</table>")
         self.assertEqual(result, {"B738": "Boeing 737 Next Generation"})
 
@@ -31,8 +31,10 @@ class ParseDesignatorListTests(unittest.TestCase):
         self.assertEqual(result, {"B738": "Boeing 737 Next Generation"})
 
     def test_ampersand_is_unescaped(self):
-        row = ('<tr><td>H60</td><td>H60</td><td><a href="/wiki/Sikorsky" '
-               'title="Sikorsky UH-60 &amp; variants">UH-60</a></td></tr>')
+        row = (
+            '<tr><td>H60</td><td>H60</td><td><a href="/wiki/Sikorsky" '
+            'title="Sikorsky UH-60 &amp; variants">UH-60</a></td></tr>'
+        )
         result = wikipedia.parse_designator_list(f"<table>{row}</table>")
         self.assertEqual(result, {"H60": "Sikorsky UH-60 & variants"})
 
@@ -55,8 +57,9 @@ def make_get_json(summary_data=None, search_hits=None, calls=None):
     return get_json
 
 
-def summary_payload(description="Boeing 737-800", thumbnail_query=True, original_query=True,
-                    doc_type=None, image_domain="commons"):
+def summary_payload(
+    description="Boeing 737-800", thumbnail_query=True, original_query=True, doc_type=None, image_domain="commons"
+):
     thumb = f"https://thumb.wikimedia.org/wikipedia/{image_domain}/thumb/a/ae/X.jpg/330px-X.jpg"
     if thumbnail_query:
         thumb += "?utm_source=test"
@@ -78,8 +81,9 @@ class SummaryTests(unittest.TestCase):
     def test_commons_image_strips_query_and_builds_file_url(self):
         get_json = make_get_json({"Boeing 737-800": summary_payload()})
         result = wikipedia.summary("Boeing 737-800", get_json)
-        self.assertEqual(result["image_url"],
-                         "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/X.jpg/330px-X.jpg")
+        self.assertEqual(
+            result["image_url"], "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/X.jpg/330px-X.jpg"
+        )
         self.assertEqual(result["file_url"], "https://commons.wikimedia.org/wiki/File:X.jpg")
         self.assertEqual(result["article_url"], "https://en.wikipedia.org/wiki/X")
 
@@ -108,8 +112,7 @@ class SummaryTests(unittest.TestCase):
 class ResolveTests(unittest.TestCase):
     def test_designator_in_list_uses_designator_list_method_without_search(self):
         calls = []
-        get_json = make_get_json(
-            {"Boeing 737 Next Generation": summary_payload()}, calls=calls)
+        get_json = make_get_json({"Boeing 737 Next Generation": summary_payload()}, calls=calls)
         designators = {"B738": "Boeing 737 Next Generation"}
         method, result = wikipedia.resolve("B738", "Boeing 737-800", designators, get_json)
         self.assertEqual(method, "designator_list")
@@ -120,7 +123,9 @@ class ResolveTests(unittest.TestCase):
         calls = []
         get_json = make_get_json(
             {"Cessna 172": summary_payload(description="single-engine light aircraft")},
-            search_hits=[{"title": "Cessna 172"}], calls=calls)
+            search_hits=[{"title": "Cessna 172"}],
+            calls=calls,
+        )
         method, result = wikipedia.resolve("C172", "Cessna 172", {}, get_json)
         self.assertEqual(method, "search")
         self.assertIsNotNone(result)
@@ -128,17 +133,17 @@ class ResolveTests(unittest.TestCase):
 
     def test_search_hit_without_aircraft_words_is_rejected(self):
         get_json = make_get_json(
-            {"Nirvana": summary_payload(description="American rock band")},
-            search_hits=[{"title": "Nirvana"}])
+            {"Nirvana": summary_payload(description="American rock band")}, search_hits=[{"title": "Nirvana"}]
+        )
         method, result = wikipedia.resolve("XXXX", "Nirvana", {}, get_json)
         self.assertEqual(method, "search")
         self.assertIsNone(result)
 
     def test_business_jet_description_is_accepted(self):
         get_json = make_get_json(
-            {"Bombardier Challenger 300": summary_payload(
-                description="Business jet made by Bombardier")},
-            search_hits=[{"title": "Bombardier Challenger 300"}])
+            {"Bombardier Challenger 300": summary_payload(description="Business jet made by Bombardier")},
+            search_hits=[{"title": "Bombardier Challenger 300"}],
+        )
         method, result = wikipedia.resolve("CL30", "Challenger 300", {}, get_json)
         self.assertEqual(method, "search")
         self.assertIsNotNone(result)
@@ -146,13 +151,15 @@ class ResolveTests(unittest.TestCase):
     def test_search_hit_for_another_model_is_rejected(self):
         get_json = make_get_json(
             {"North American B-25 Mitchell": summary_payload(description="American WWII medium bomber")},
-            search_hits=[{"title": "North American B-25 Mitchell"}])
+            search_hits=[{"title": "North American B-25 Mitchell"}],
+        )
         method, result = wikipedia.resolve("V10", "NORTH AMERICAN AVIATION INC OV-10D", {}, get_json)
         self.assertIsNone(result)
 
     def test_names_same_model(self):
-        self.assertTrue(wikipedia.names_same_model("NORTH AMERICAN AVIATION INC OV-10D",
-                                                   "North American Rockwell OV-10 Bronco"))
+        self.assertTrue(
+            wikipedia.names_same_model("NORTH AMERICAN AVIATION INC OV-10D", "North American Rockwell OV-10 Bronco")
+        )
         self.assertTrue(wikipedia.names_same_model("TEXTRON AVIATION INC 182T", "Cessna 182 Skylane"))
         self.assertFalse(wikipedia.names_same_model("TEXTRON AVIATION INC 182T", "Diamond DA40 Diamond Star"))
         self.assertTrue(wikipedia.names_same_model("Boeing 737-800", "Boeing 737 Next Generation"))
@@ -167,7 +174,9 @@ class ResolveTests(unittest.TestCase):
         calls = []
         get_json = make_get_json(
             {"Airbus A320": summary_payload(description="Airbus A320 family airliner")},
-            search_hits=[{"title": "Airbus A320"}], calls=calls)
+            search_hits=[{"title": "Airbus A320"}],
+            calls=calls,
+        )
         wikipedia.resolve("A320", "A320/A321", {}, get_json)
         search_calls = [c for c in calls if "list=search" in c]
         self.assertEqual(len(search_calls), 1)

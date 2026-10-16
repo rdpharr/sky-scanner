@@ -1,4 +1,3 @@
-import csv
 import io
 import unittest
 import zipfile
@@ -19,12 +18,13 @@ class EnrichmentParserTests(unittest.TestCase):
         master = (
             'n-number,"Mfr Mdl Code","Registrant Name","Mode S Code Hex"\n'
             '123AB,0012345,"  ACME AVIATION, LLC ",00a001\n'
-            '123AC,9999999,Unknown,ABCDEF\n'
-            'anonymous,0012345,Private,123456\n'
+            "123AC,9999999,Unknown,ABCDEF\n"
+            "anonymous,0012345,Private,123456\n"
         )
-        acftref = 'Code,Manufacturer,Model,Type Aircraft\n0012345,Cessna,172S,4\n'
+        acftref = "Code,Manufacturer,Model,Type Aircraft\n0012345,Cessna,172S,4\n"
         rows = parse_faa_registry(
-            make_zip(master, acftref), source_url="https://example.test/registry.zip",
+            make_zip(master, acftref),
+            source_url="https://example.test/registry.zip",
             retrieved_at="2026-09-26T08:00:00-07:00",
         )
         self.assertEqual(len(rows), 2)
@@ -40,8 +40,11 @@ class EnrichmentParserTests(unittest.TestCase):
         self.assertIsNone(rows[1]["manufacturer"])
 
     def test_quoted_commas_and_header_whitespace(self):
-        master = ' N Number , Aircraft Manufacturer Model Code , Owner , Mode S Code Hex \n4567,"0000001","Example, Inc.",abcdef\n'
-        ref = 'Aircraft Manufacturer Model Code,Manufacturer Name,Model Name,Type Aircraft\n0000001,ACME,Model X,6\n'
+        master = (
+            " N Number , Aircraft Manufacturer Model Code , Owner , Mode S Code Hex \n"
+            '4567,"0000001","Example, Inc.",abcdef\n'
+        )
+        ref = "Aircraft Manufacturer Model Code,Manufacturer Name,Model Name,Type Aircraft\n0000001,ACME,Model X,6\n"
         row = parse_faa_registry(make_zip(master, ref))[0]
         self.assertEqual(row["registration"], "N4567")
         self.assertEqual(row["registered_owner"], "Example, Inc.")
@@ -49,13 +52,10 @@ class EnrichmentParserTests(unittest.TestCase):
 
     def test_current_faa_headers_join_mfr_and_type_acft_columns(self):
         master = (
-            'N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,MODE S CODE HEX,\n'
-            '12345,serial,0000001,00000,1975,1,Owner Name,00a123,\n'
+            "N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,MODE S CODE HEX,\n"
+            "12345,serial,0000001,00000,1975,1,Owner Name,00a123,\n"
         )
-        acftref = (
-            'CODE,MFR,MODEL,TYPE-ACFT,TYPE-ENG,AC-CAT\n'
-            '0000001,Cessna,172S,4,1,1\n'
-        )
+        acftref = "CODE,MFR,MODEL,TYPE-ACFT,TYPE-ENG,AC-CAT\n0000001,Cessna,172S,4,1,1\n"
         rows = parse_faa_registry(make_zip(master, acftref))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["manufacturer"], "Cessna")
@@ -66,21 +66,21 @@ class EnrichmentParserTests(unittest.TestCase):
 
     def test_invalid_registrant_type_and_year_are_dropped(self):
         master = (
-            'N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,MODE S CODE HEX,\n'
-            '12345,serial,0000001,00000,    ,X,Owner Name,00a123,\n'
+            "N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,MODE S CODE HEX,\n"
+            "12345,serial,0000001,00000,    ,X,Owner Name,00a123,\n"
         )
-        acftref = 'CODE,MFR,MODEL,TYPE-ACFT,TYPE-ENG,AC-CAT\n0000001,Cessna,172S,4,1,1\n'
+        acftref = "CODE,MFR,MODEL,TYPE-ACFT,TYPE-ENG,AC-CAT\n0000001,Cessna,172S,4,1,1\n"
         row = parse_faa_registry(make_zip(master, acftref))[0]
         self.assertIsNone(row["registrant_type"])
         self.assertIsNone(row["year_mfr"])
 
     def test_malformed_detected_headers_raise_and_long_n_number_is_rejected(self):
-        malformed_master = 'N-NUMBER,MFR MDL CODE,NAME\n12345,0000001,Owner\n'
+        malformed_master = "N-NUMBER,MFR MDL CODE,NAME\n12345,0000001,Owner\n"
         with self.assertRaisesRegex(ValueError, "malformed FAA MASTER header"):
-            parse_faa_registry(make_zip(malformed_master, 'CODE,MFR,MODEL,TYPE-ACFT\n'))
-        malformed_ref = 'CODE,MFR,MODEL\n0000001,Cessna,172S\n'
+            parse_faa_registry(make_zip(malformed_master, "CODE,MFR,MODEL,TYPE-ACFT\n"))
+        malformed_ref = "CODE,MFR,MODEL\n0000001,Cessna,172S\n"
         with self.assertRaisesRegex(ValueError, "malformed FAA REFERENCE header"):
-            parse_faa_registry(make_zip('12345,x,x,' + ','.join([''] * 29) + 'ABCDEF\n', malformed_ref))
+            parse_faa_registry(make_zip("12345,x,x," + ",".join([""] * 29) + "ABCDEF\n", malformed_ref))
         self.assertIsNone(normalize_registration("N12345AB"))
 
     def test_normalizers_reject_unknown_and_preserve_zeroes(self):

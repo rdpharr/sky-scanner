@@ -38,9 +38,12 @@ shown, because they are received directly over the air, and are labeled. Tests
 check these rules on every build.
 """)
 
+FAA_REGISTRY = (
+    "https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/releasable_aircraft_download"
+)
 st.header("Data sources")
-st.markdown("""
-- [FAA aircraft registry](https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/releasable_aircraft_download) (public domain)
+st.markdown(f"""
+- [FAA aircraft registry]({FAA_REGISTRY}) (public domain)
 - [tar1090-db](https://github.com/wiedehopf/tar1090-db)
 - [OpenSky aircraft database](https://opensky-network.org/data/aircraft)
 - [plane-alert-db](https://github.com/sdr-enthusiasts/plane-alert-db) (ODbL)
@@ -50,5 +53,4 @@ st.markdown("""
 - Type photos from [Wikimedia Commons](https://commons.wikimedia.org), credited under each photo
 """)
 
-st.markdown("Source code, design decisions and the build plan are on "
-            "[GitHub](https://github.com/rdpharr/sky-scanner).")
+st.markdown("Source code, design decisions and the build plan are on [GitHub](https://github.com/rdpharr/sky-scanner).")

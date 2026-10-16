@@ -28,10 +28,11 @@ import os
 import signal
 import tempfile
 import threading
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterable, Iterator, Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 log = logging.getLogger("sky_scanner.replicator")
@@ -50,11 +51,14 @@ class TableSpec:
 
 
 TABLES = (
-    TableSpec("aircraft_snapshots", "stream",
-              key=("bucket_start", "receiver_id", "address_type", "address", "frequency_hz"),
-              partition="bucket_start", cluster=("address",)),
-    TableSpec("capture_intervals", "stream", key=("id",), partition="started_at",
-              cluster=("frequency_hz",)),
+    TableSpec(
+        "aircraft_snapshots",
+        "stream",
+        key=("bucket_start", "receiver_id", "address_type", "address", "frequency_hz"),
+        partition="bucket_start",
+        cluster=("address",),
+    ),
+    TableSpec("capture_intervals", "stream", key=("id",), partition="started_at", cluster=("frequency_hz",)),
     TableSpec("receivers", "reload", exclude=frozenset({"location"})),
     TableSpec("aircraft_metadata", "reload", cluster=("source_name", "address")),
     TableSpec("enrichment_imports", "reload"),
@@ -71,12 +75,22 @@ REFERENCE_URLS = {
 MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 
 _TYPES = {
-    "text": "STRING", "character varying": "STRING", "character": "STRING",
-    "uuid": "STRING", "smallint": "INT64", "integer": "INT64", "bigint": "INT64",
-    "real": "FLOAT64", "double precision": "FLOAT64", "numeric": "NUMERIC",
-    "boolean": "BOOL", "timestamp with time zone": "TIMESTAMP",
-    "timestamp without time zone": "DATETIME", "date": "DATE",
-    "json": "JSON", "jsonb": "JSON",
+    "text": "STRING",
+    "character varying": "STRING",
+    "character": "STRING",
+    "uuid": "STRING",
+    "smallint": "INT64",
+    "integer": "INT64",
+    "bigint": "INT64",
+    "real": "FLOAT64",
+    "double precision": "FLOAT64",
+    "numeric": "NUMERIC",
+    "boolean": "BOOL",
+    "timestamp with time zone": "TIMESTAMP",
+    "timestamp without time zone": "DATETIME",
+    "date": "DATE",
+    "json": "JSON",
+    "jsonb": "JSON",
 }
 
 
@@ -97,7 +111,7 @@ def bq_type(pg_type: str) -> str:
 def to_json_value(value: Any, *, json_as_text: bool = False) -> Any:
     """Convert a Postgres value for a BigQuery JSON request."""
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat() if value.tzinfo else value.isoformat()
+        return value.astimezone(UTC).isoformat() if value.tzinfo else value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, (UUID, Decimal)):
@@ -110,15 +124,15 @@ def to_json_value(value: Any, *, json_as_text: bool = False) -> Any:
 class Source(Protocol):
     def columns(self, table: str) -> list[tuple[str, str, bool, bool]]: ...
     def now(self) -> datetime: ...
-    def rows(self, table: str, columns: list[str], after: datetime | None = None,
-             until: datetime | None = None) -> Iterator[dict[str, Any]]: ...
+    def rows(
+        self, table: str, columns: list[str], after: datetime | None = None, until: datetime | None = None
+    ) -> Iterator[dict[str, Any]]: ...
 
 
 class Sink(Protocol):
     def ensure_table(self, spec: TableSpec, schema: list[Column]) -> None: ...
     def max_written_at(self, table: str) -> datetime | None: ...
-    def load(self, spec: TableSpec, schema: list[Column], rows: Iterable[dict[str, Any]],
-             truncate: bool) -> int: ...
+    def load(self, spec: TableSpec, schema: list[Column], rows: Iterable[dict[str, Any]], truncate: bool) -> int: ...
     def stream(self, table: str, rows: list[dict[str, Any]], row_ids: list[str]) -> None: ...
     def load_csv(self, table: str, data: bytes) -> None: ...
 
@@ -130,10 +144,17 @@ class StreamState:
 
 
 class Replicator:
-    def __init__(self, source: Source, sink: Sink, tables: Iterable[TableSpec] = TABLES,
-                 overlap: timedelta = timedelta(minutes=2), batch_size: int = 500,
-                 clock=lambda: datetime.now(timezone.utc),
-                 urls: dict[str, str] | None = None, fetch=None):
+    def __init__(
+        self,
+        source: Source,
+        sink: Sink,
+        tables: Iterable[TableSpec] = TABLES,
+        overlap: timedelta = timedelta(minutes=2),
+        batch_size: int = 500,
+        clock=lambda: datetime.now(UTC),
+        urls: dict[str, str] | None = None,
+        fetch=None,
+    ):
         self.source, self.sink = source, sink
         self.tables = tuple(tables)
         self.urls = dict(REFERENCE_URLS if urls is None else urls)
@@ -190,9 +211,9 @@ class Replicator:
                         state.sent[self._row_id(spec, row)] = row["written_at"]
                     yield row
 
-            count = self.sink.load(spec, self.schemas[spec.name],
-                                   remember_overlap(self._rows(spec, until=cutoff)),
-                                   truncate=False)
+            count = self.sink.load(
+                spec, self.schemas[spec.name], remember_overlap(self._rows(spec, until=cutoff)), truncate=False
+            )
             log.info("backfilled %s: %d rows written up to %s", spec.name, count, cutoff)
             self.streams[spec.name] = state
             return
@@ -212,9 +233,11 @@ class Replicator:
                 ids.append(row_id)
         json_columns = {c.name for c in self.schemas[spec.name] if c.bq_type == "JSON"}
         for i in range(0, len(rows), self.batch_size):
-            batch = [{k: to_json_value(v, json_as_text=k in json_columns) for k, v in r.items()}
-                     for r in rows[i:i + self.batch_size]]
-            self.sink.stream(spec.name, batch, ids[i:i + self.batch_size])
+            batch = [
+                {k: to_json_value(v, json_as_text=k in json_columns) for k, v in r.items()}
+                for r in rows[i : i + self.batch_size]
+            ]
+            self.sink.stream(spec.name, batch, ids[i : i + self.batch_size])
         # Only after every batch succeeded: remember and advance.
         for row, row_id in zip(rows, ids):
             state.sent[row_id] = row["written_at"]
@@ -234,7 +257,9 @@ class PostgresSource:
                 """SELECT column_name, data_type, is_nullable = 'YES', is_generated = 'ALWAYS'
                    FROM information_schema.columns
                    WHERE table_schema = 'public' AND table_name = %s
-                   ORDER BY ordinal_position""", (table,))
+                   ORDER BY ordinal_position""",
+                (table,),
+            )
             return [tuple(r) for r in cursor.fetchall()]
 
     def now(self) -> datetime:
@@ -246,7 +271,8 @@ class PostgresSource:
         from psycopg import sql
 
         query = sql.SQL("SELECT {} FROM {}").format(
-            sql.SQL(", ").join(map(sql.Identifier, columns)), sql.Identifier(table))
+            sql.SQL(", ").join(map(sql.Identifier, columns)), sql.Identifier(table)
+        )
         conditions, params = [], []
         if after is not None:
             conditions.append(sql.SQL("written_at > %s"))
@@ -259,12 +285,11 @@ class PostgresSource:
         if after is not None or until is not None:
             query += sql.SQL(" ORDER BY written_at")
         # A server-side cursor keeps large reloads out of memory.
-        with self.connection.transaction():
-            with self.connection.cursor(name=f"replicate_{table}") as cursor:
-                cursor.itersize = 5000
-                cursor.execute(query, params)
-                for record in cursor:
-                    yield dict(zip(columns, record))
+        with self.connection.transaction(), self.connection.cursor(name=f"replicate_{table}") as cursor:
+            cursor.itersize = 5000
+            cursor.execute(query, params)
+            for record in cursor:
+                yield dict(zip(columns, record))
 
 
 class BigQuerySink:
@@ -277,9 +302,7 @@ class BigQuerySink:
     def _schema(self, schema: list[Column]):
         from google.cloud import bigquery
 
-        return [bigquery.SchemaField(c.name, c.bq_type,
-                                     mode="NULLABLE" if c.nullable else "REQUIRED")
-                for c in schema]
+        return [bigquery.SchemaField(c.name, c.bq_type, mode="NULLABLE" if c.nullable else "REQUIRED") for c in schema]
 
     def ensure_table(self, spec, schema):
         from google.api_core.exceptions import NotFound
@@ -301,14 +324,12 @@ class BigQuerySink:
         added = [f for f in fields if f.name not in existing]
         if added:
             # New columns are added as NULLABLE so existing rows stay valid.
-            table.schema = list(table.schema) + [
-                f.__class__(f.name, f.field_type, mode="NULLABLE") for f in added]
+            table.schema = list(table.schema) + [f.__class__(f.name, f.field_type, mode="NULLABLE") for f in added]
             self.client.update_table(table, ["schema"])
             log.info("added columns to %s: %s", spec.name, [f.name for f in added])
 
     def max_written_at(self, table):
-        result = self.client.query(
-            f"SELECT MAX(written_at) AS m FROM `{self._ref(table)}`").result()
+        result = self.client.query(f"SELECT MAX(written_at) AS m FROM `{self._ref(table)}`").result()
         return next(iter(result)).m
 
     def load(self, spec, schema, rows, truncate):
@@ -318,8 +339,10 @@ class BigQuerySink:
         with tempfile.TemporaryFile() as raw:
             with gzip.GzipFile(fileobj=raw, mode="wb") as out:
                 for row in rows:
-                    out.write(json.dumps({k: to_json_value(v) for k, v in row.items()},
-                                         separators=(",", ":")).encode() + b"\n")
+                    out.write(
+                        json.dumps({k: to_json_value(v) for k, v in row.items()}, separators=(",", ":")).encode()
+                        + b"\n"
+                    )
                     count += 1
             raw.seek(0)
             config = bigquery.LoadJobConfig(
@@ -332,8 +355,7 @@ class BigQuerySink:
             if spec.cluster:
                 config.clustering_fields = list(spec.cluster)
             if count or truncate:
-                self.client.load_table_from_file(raw, self._ref(spec.name),
-                                                 job_config=config).result()
+                self.client.load_table_from_file(raw, self._ref(spec.name), job_config=config).result()
         return count
 
     def load_csv(self, table, data):
@@ -355,9 +377,11 @@ class BigQuerySink:
             source_format=bigquery.SourceFormat.CSV,
             schema=[bigquery.SchemaField("_row_number", "INT64")]
             + [bigquery.SchemaField(name, "STRING") for name in header],
-            write_disposition="WRITE_TRUNCATE")
-        self.client.load_table_from_file(io.BytesIO(out.getvalue().encode()), self._ref(table),
-                                         job_config=config).result()
+            write_disposition="WRITE_TRUNCATE",
+        )
+        self.client.load_table_from_file(
+            io.BytesIO(out.getvalue().encode()), self._ref(table), job_config=config
+        ).result()
 
     def stream(self, table, rows, row_ids):
         errors = self.client.insert_rows_json(self._ref(table), rows, row_ids=row_ids)
@@ -376,8 +400,9 @@ def _fetch(url: str, timeout: int = 60) -> bytes:
     return data
 
 
-def run(replicator: Replicator, stop: threading.Event, interval: float,
-        reload_every: timedelta, max_failures: int = 5) -> None:
+def run(
+    replicator: Replicator, stop: threading.Event, interval: float, reload_every: timedelta, max_failures: int = 5
+) -> None:
     """Replicate until stopped.
 
     A failed table is retried on the next poll with its watermark (or reload
@@ -388,7 +413,7 @@ def run(replicator: Replicator, stop: threading.Event, interval: float,
     for spec in replicator.tables:
         if spec.mode == "stream":
             replicator.start_stream(spec)
-    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    epoch = datetime.min.replace(tzinfo=UTC)
     next_reload = {s.name: epoch for s in replicator.tables if s.mode == "reload"}
     next_reload.update({name: epoch for name in replicator.urls})
     streamed, last_report, failures = 0, replicator.clock(), 0
@@ -420,10 +445,8 @@ def run(replicator: Replicator, stop: threading.Event, interval: float,
         if failures >= max_failures:
             raise error
         if now - last_report >= timedelta(minutes=10):
-            lag = {n: round((now - s.watermark).total_seconds())
-                   for n, s in replicator.streams.items()}
-            log.info("streamed %d rows in the last 10 min; seconds since newest row: %s",
-                     streamed, lag)
+            lag = {n: round((now - s.watermark).total_seconds()) for n, s in replicator.streams.items()}
+            log.info("streamed %d rows in the last 10 min; seconds since newest row: %s", streamed, lag)
             streamed, last_report = 0, now
         stop.wait(interval)
 

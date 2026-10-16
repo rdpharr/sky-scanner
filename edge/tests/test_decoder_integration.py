@@ -1,4 +1,5 @@
 """Exercise the patched readsb event stream with valid synthetic AVR frames."""
+
 import json
 import os
 import selectors
@@ -22,12 +23,20 @@ class ReadsbEventIntegrationTests(unittest.TestCase):
             port = reservation.getsockname()[1]
 
         command = [
-            binary, "--net-only", "--net", "--net-bind-address", "127.0.0.1",
-            "--net-ri-port", str(port), "--quiet", "--no-fix",
+            binary,
+            "--net-only",
+            "--net",
+            "--net-bind-address",
+            "127.0.0.1",
+            "--net-ri-port",
+            str(port),
+            "--quiet",
+            "--no-fix",
         ]
         environment = {**os.environ, "SKY_SCANNER_JSON": "1"}
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                   env=environment, bufsize=0)
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment, bufsize=0
+        )
         selector = selectors.DefaultSelector()
         decoded = []
         pending = b""

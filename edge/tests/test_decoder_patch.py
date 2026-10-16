@@ -1,11 +1,11 @@
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 
 DECODER_DIR = Path(__file__).parents[1] / "decoder"
 sys.path.insert(0, str(DECODER_DIR))
-from patch_readsb import patch
+from patch_readsb import patch  # noqa: E402
 
 
 class ReadsbPatchTests(unittest.TestCase):
@@ -14,9 +14,7 @@ class ReadsbPatchTests(unittest.TestCase):
             source_dir = Path(temp_dir)
             source = source_dir / "net_io.c"
             source.write_text(
-                '#include "readsb.h"\n\n'
-                "static void outputMessage(struct modesMessage *mm) {\n"
-                "    return;\n}\n"
+                '#include "readsb.h"\n\nstatic void outputMessage(struct modesMessage *mm) {\n    return;\n}\n'
             )
 
             patch(source_dir)

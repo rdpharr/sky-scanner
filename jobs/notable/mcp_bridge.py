@@ -12,10 +12,18 @@ EXCLUDED = {"run_sql"}
 
 
 def openai_tools(mcp_tools) -> list[dict[str, Any]]:
-    return [{"type": "function", "function": {
-                "name": t.name, "description": t.description or "",
-                "parameters": t.input_schema or {"type": "object", "properties": {}}}}
-            for t in mcp_tools if t.name not in EXCLUDED]
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description or "",
+                "parameters": t.input_schema or {"type": "object", "properties": {}},
+            },
+        }
+        for t in mcp_tools
+        if t.name not in EXCLUDED
+    ]
 
 
 def unwrap(result) -> Any:

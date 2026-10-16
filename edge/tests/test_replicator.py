@@ -1,6 +1,6 @@
 import threading
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -13,7 +13,7 @@ from sky_scanner.replicator import (
     to_json_value,
 )
 
-T0 = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 SNAPSHOTS = TableSpec("aircraft_snapshots", "stream", key=("address",), partition="bucket_start")
 RECEIVERS = TableSpec("receivers", "reload", exclude=frozenset({"location"}))
 
@@ -53,8 +53,8 @@ class FakeSource:
 
     def write(self, address, written_at):
         self.tables["aircraft_snapshots"].append(
-            {"address": address, "bucket_start": written_at, "fields": {"a": 1},
-             "written_at": written_at})
+            {"address": address, "bucket_start": written_at, "fields": {"a": 1}, "written_at": written_at}
+        )
 
 
 class FakeSink:
@@ -109,10 +109,11 @@ class SchemaTests(unittest.TestCase):
     def test_skips_generated_and_excluded_columns_and_adds_replicated_at(self):
         sink = FakeSink()
         replicator(FakeSource(), sink)
-        self.assertEqual([c.name for c in sink.created["aircraft_snapshots"]],
-                         ["address", "bucket_start", "fields", "written_at", REPLICATED_AT])
-        self.assertEqual([c.name for c in sink.created["receivers"]],
-                         ["receiver_id", REPLICATED_AT])
+        self.assertEqual(
+            [c.name for c in sink.created["aircraft_snapshots"]],
+            ["address", "bucket_start", "fields", "written_at", REPLICATED_AT],
+        )
+        self.assertEqual([c.name for c in sink.created["receivers"]], ["receiver_id", REPLICATED_AT])
 
 
 class StreamTests(unittest.TestCase):
@@ -122,9 +123,8 @@ class StreamTests(unittest.TestCase):
         source.write("B", T0 + timedelta(seconds=5))  # after the cutoff
         r = replicator(source, sink)
         r.start_stream(SNAPSHOTS)
-        (name, rows, truncate), = sink.loads
-        self.assertEqual((name, [x["address"] for x in rows], truncate),
-                         ("aircraft_snapshots", ["A"], False))
+        ((name, rows, truncate),) = sink.loads
+        self.assertEqual((name, [x["address"] for x in rows], truncate), ("aircraft_snapshots", ["A"], False))
         self.assertEqual(r.streams["aircraft_snapshots"].watermark, T0)
 
     def test_does_not_restream_backfilled_rows_inside_the_overlap(self):
@@ -147,8 +147,7 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(r.stream_once(SNAPSHOTS), 1)
         source.write("B", T0 + timedelta(seconds=40))
         self.assertEqual(r.stream_once(SNAPSHOTS), 1)
-        self.assertEqual([[row["address"] for row in rows] for _, rows, _ in sink.streamed],
-                         [["A"], ["B"]])
+        self.assertEqual([[row["address"] for row in rows] for _, rows, _ in sink.streamed], [["A"], ["B"]])
 
     def test_finds_a_row_committed_late_inside_the_overlap(self):
         source, sink = FakeSource(), FakeSink(max_written_at=T0)
@@ -192,7 +191,7 @@ class ReloadTests(unittest.TestCase):
         source, sink = FakeSource(), FakeSink()
         r = replicator(source, sink)
         r.reload(RECEIVERS)
-        (name, rows, truncate), = sink.loads
+        ((name, rows, truncate),) = sink.loads
         self.assertTrue(truncate)
         self.assertEqual(rows, [{"receiver_id": "rx", REPLICATED_AT: T0}])
 
@@ -211,9 +210,14 @@ class RunLoopTests(unittest.TestCase):
             stream(*args)
 
         sink.stream = counting_stream
-        r = Replicator(source, sink, tables=(SNAPSHOTS, RECEIVERS), clock=lambda: T0,
-                       urls={"doc8643_types": "https://example.test/types.csv"},
-                       fetch=lambda url: b"Designator\nB738\n")
+        r = Replicator(
+            source,
+            sink,
+            tables=(SNAPSHOTS, RECEIVERS),
+            clock=lambda: T0,
+            urls={"doc8643_types": "https://example.test/types.csv"},
+            fetch=lambda url: b"Designator\nB738\n",
+        )
         run(r, stop, interval=0, reload_every=timedelta(hours=24), max_failures=max_failures)
         return sink
 

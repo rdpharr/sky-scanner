@@ -2,7 +2,7 @@ import json
 import time
 import unittest
 import urllib.error
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from sky_scanner.receiver import EventSender, band_dwell, capture, decoder_command, normalize_readsb
 
@@ -40,8 +40,7 @@ class ReadsbNormalizationTests(unittest.TestCase):
 
     def test_non_icao_and_unrecognized_types_keep_distinct_identity(self):
         non_icao = normalize_readsb(
-            {"received_at": 1.0, "address": "abc123", "address_type": "adsb_other",
-             "address_non_icao": True},
+            {"received_at": 1.0, "address": "abc123", "address_type": "adsb_other", "address_non_icao": True},
             "rx",
         )
         unknown = normalize_readsb(
@@ -57,15 +56,13 @@ class ReadsbNormalizationTests(unittest.TestCase):
         for decoder_type in ("icao", "icao_nontransponder", "mode_s", "adsr_icao", "tisb_icao"):
             with self.subTest(decoder_type=decoder_type):
                 row = normalize_readsb(
-                    {"received_at": 1, "address": "123456", "address_type": decoder_type,
-                     "address_non_icao": False},
+                    {"received_at": 1, "address": "123456", "address_type": decoder_type, "address_non_icao": False},
                     "rx",
                 )
                 self.assertEqual(row["address_type"], "icao")
                 self.assertEqual(row["fields"]["readsb_address_type"], decoder_type)
         explicit_non_icao = normalize_readsb(
-            {"received_at": 1, "address": "123456", "address_type": "adsr_icao",
-             "address_non_icao": True},
+            {"received_at": 1, "address": "123456", "address_type": "adsr_icao", "address_non_icao": True},
             "rx",
         )
         self.assertEqual(explicit_non_icao["address_type"], "readsb:adsr_icao")
@@ -80,15 +77,20 @@ class ReadsbNormalizationTests(unittest.TestCase):
                 self.assertIsNone(normalize_readsb(payload, "rx"))
 
     def test_garbage_flagged_messages_are_rejected(self):
-        payload = {"received_at": 1, "address": "123456", "address_type": "icao",
-                   "garbage": True}
+        payload = {"received_at": 1, "address": "123456", "address_type": "icao", "garbage": True}
         self.assertIsNone(normalize_readsb(payload, "rx"))
 
     def test_position_bad_strips_latitude_and_longitude_but_keeps_other_fields(self):
         observation = normalize_readsb(
-            {"received_at": 1, "address": "123456", "address_type": "icao",
-             "position_bad": True, "latitude": 37.5, "longitude": -122.2,
-             "altitude_baro_ft": 1000},
+            {
+                "received_at": 1,
+                "address": "123456",
+                "address_type": "icao",
+                "position_bad": True,
+                "latitude": 37.5,
+                "longitude": -122.2,
+                "altitude_baro_ft": 1000,
+            },
             "rx",
         )
         self.assertNotIn("latitude", observation["fields"])
@@ -97,8 +99,14 @@ class ReadsbNormalizationTests(unittest.TestCase):
 
     def test_position_bad_false_keeps_latitude_and_longitude(self):
         observation = normalize_readsb(
-            {"received_at": 1, "address": "123456", "address_type": "icao",
-             "position_bad": False, "latitude": 37.5, "longitude": -122.2},
+            {
+                "received_at": 1,
+                "address": "123456",
+                "address_type": "icao",
+                "position_bad": False,
+                "latitude": 37.5,
+                "longitude": -122.2,
+            },
             "rx",
         )
         self.assertEqual(observation["fields"]["latitude"], 37.5)
@@ -108,8 +116,7 @@ class ReadsbNormalizationTests(unittest.TestCase):
         for raw, expected in ((123, "0123"), (7700, "7700"), (0, "0000"), (7777, "7777")):
             with self.subTest(raw=raw):
                 observation = normalize_readsb(
-                    {"received_at": 1, "address": "123456", "address_type": "icao",
-                     "squawk": raw},
+                    {"received_at": 1, "address": "123456", "address_type": "icao", "squawk": raw},
                     "rx",
                 )
                 self.assertEqual(observation["fields"]["squawk"], expected)
@@ -143,11 +150,9 @@ class EventSenderTests(unittest.TestCase):
         return False
 
     def test_4xx_drops_batch_without_retry_and_next_batch_is_still_delivered(self):
-        http_error = urllib.error.HTTPError("http://ingest.test/events", 400,
-                                             "bad request", {}, None)
+        http_error = urllib.error.HTTPError("http://ingest.test/events", 400, "bad request", {}, None)
         success = self._make_response()
-        with patch("sky_scanner.receiver.urllib.request.urlopen",
-                   side_effect=[http_error, success]) as urlopen:
+        with patch("sky_scanner.receiver.urllib.request.urlopen", side_effect=[http_error, success]) as urlopen:
             sender = EventSender("http://ingest.test/events")
             try:
                 sender.put({"id": "1"})
@@ -163,11 +168,9 @@ class EventSenderTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
 
     def test_5xx_retries_same_batch_after_wait_then_delivers(self):
-        server_error = urllib.error.HTTPError("http://ingest.test/events", 503,
-                                               "unavailable", {}, None)
+        server_error = urllib.error.HTTPError("http://ingest.test/events", 503, "unavailable", {}, None)
         success = self._make_response()
-        with patch("sky_scanner.receiver.urllib.request.urlopen",
-                   side_effect=[server_error, success]) as urlopen:
+        with patch("sky_scanner.receiver.urllib.request.urlopen", side_effect=[server_error, success]) as urlopen:
             sender = EventSender("http://ingest.test/events")
             # Skip the real 2-second backoff so the test stays fast; the
             # production wait duration is exercised via the call arguments.
@@ -258,8 +261,12 @@ class CaptureTests(unittest.TestCase):
         emitted = []
         selectors = [self._Selector(), self._Selector()]
         encoded = json.dumps({"received_at": 10, "address": "123456", "address_type": "icao"}).encode() + b"\n"
-        encoded_uat = json.dumps({"address_qualifier": "adsb_icao", "address": "123456",
-                                  "metadata": {"received_at": 10}}).encode() + b"\n"
+        encoded_uat = (
+            json.dumps(
+                {"address_qualifier": "adsb_icao", "address": "123456", "metadata": {"received_at": 10}}
+            ).encode()
+            + b"\n"
+        )
         popen_calls = []
 
         def start_process(*args, **kwargs):
@@ -294,9 +301,9 @@ class CaptureTests(unittest.TestCase):
             patch("sky_scanner.receiver.os.read", side_effect=OSError("decoder pipe failed")),
             patch("sky_scanner.receiver.time.monotonic", side_effect=[0, 0]),
             patch("sky_scanner.receiver.time.time", side_effect=[100, 100.5, 101]),
+            self.assertRaisesRegex(OSError, "decoder pipe failed"),
         ):
-            with self.assertRaisesRegex(OSError, "decoder pipe failed"):
-                capture(1090000000, 10, emitted.append, Mock(is_set=Mock(return_value=False)))
+            capture(1090000000, 10, emitted.append, Mock(is_set=Mock(return_value=False)))
 
         self.assertEqual(process.signals, [15])
         self.assertTrue(process.stdout.close.called)

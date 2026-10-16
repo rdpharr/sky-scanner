@@ -20,7 +20,6 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-
 Identity = tuple[str, str, str, int]
 BucketKey = tuple[str, str, str, int, int]
 
@@ -116,15 +115,9 @@ class SnapshotAccumulator:
             if previous is None or value["timestamp"] >= previous["timestamp"]:
                 carry[name] = value
         cutoff = start + self.bucket_seconds - self.carry_seconds
-        fields = {
-            name: dict(value)
-            for name, value in carry.items()
-            if value["timestamp"] >= cutoff
-        }
+        fields = {name: dict(value) for name, value in carry.items() if value["timestamp"] >= cutoff}
         self._carry[identity] = fields.copy()
-        self._flushed_through = max(
-            start, self._flushed_through if self._flushed_through is not None else start
-        )
+        self._flushed_through = max(start, self._flushed_through if self._flushed_through is not None else start)
         return {
             "bucket_start": start,
             "receiver_id": receiver,
@@ -141,10 +134,7 @@ class SnapshotAccumulator:
         """Discard expired cached fields and empty identities to bound memory."""
         expired_before = now - self.carry_seconds - self.bucket_seconds
         for identity, values in list(self._carry.items()):
-            fresh = {
-                name: value for name, value in values.items()
-                if value["timestamp"] >= expired_before
-            }
+            fresh = {name: value for name, value in values.items() if value["timestamp"] >= expired_before}
             if fresh:
                 self._carry[identity] = fresh
             else:

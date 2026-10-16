@@ -14,33 +14,40 @@ with params as (
         timestamp(date_sub(window_end, interval 7 day), 'America/Los_Angeles') as week_start,
         timestamp(window_end, 'America/Los_Angeles') as week_end,
         date_diff(window_end, date('{{ var("collection_start") }}'), day)
-            >= {{ var("novelty_min_history_days") }} as novelty_enabled
+        >= {{ var("novelty_min_history_days") }} as novelty_enabled
     from unnest(generate_date_array(
         date_add(date('{{ var("collection_start") }}'), interval 7 day),
-        current_date('America/Los_Angeles'))) as window_end
+        current_date('America/Los_Angeles')
+    )) as window_end
 ),
 
 aircraft as (
     select
         a.*,
-        {{ public_owner('a.owner', 'a.owner_source', 'a.faa_registrant_is_organization', 'a.faa_registrant_type') }} as owner_name
+        {{ public_owner('a.owner', 'a.owner_source', 'a.faa_registrant_is_organization', 'a.faa_registrant_type') }}
+            as owner_name
     from {{ ref('dim_aircraft') }} as a
     where a.is_confirmed
 ),
 
 week as (
-    select p.window_end, s.*
+    select
+        p.window_end,
+        s.*
     from {{ ref('fct_sightings') }} as s
     inner join params as p on s.started_at >= p.week_start and s.started_at < p.week_end
 ),
 
 prior as (
     -- The 28 days before the window: each aircraft's own baseline.
-    select p.window_end, s.*
+    select
+        p.window_end,
+        s.*
     from {{ ref('fct_sightings') }} as s
     inner join params as p
-        on s.started_at >= timestamp_sub(p.week_start, interval 28 day)
-       and s.started_at < p.week_start
+        on
+            s.started_at >= timestamp_sub(p.week_start, interval 28 day)
+            and s.started_at < p.week_start
 ),
 
 this_week as (
@@ -79,8 +86,11 @@ baseline as (
 types as (
     -- Rarity as of each window's end: aircraft of the type heard before then,
     -- so past editions are not scored with what was heard later.
-    select p.window_end, a.designator, count(*) as type_aircraft_heard,
-           min(a.first_seen_at) as type_first_seen_at
+    select
+        p.window_end,
+        a.designator,
+        count(*) as type_aircraft_heard,
+        min(a.first_seen_at) as type_first_seen_at
     from aircraft as a
     inner join params as p on a.first_seen_at < p.week_end
     where a.designator is not null
@@ -116,11 +126,13 @@ features as (
         t.type_aircraft_heard,
         -- A type is only "new this week" once there are two weeks of history.
         t.type_first_seen_at >= p.week_start
-            and date_diff(p.window_start, date('{{ var("collection_start") }}'), day) >= 14
+        and date_diff(p.window_start, date('{{ var("collection_start") }}'), day) >= 14
             as type_first_seen_this_week,
         a.first_seen_at >= p.week_start as first_seen_this_week,
         p.novelty_enabled,
-        exists(select 1 from unnest(w.squawks_7d) as sq where sq in ('7500', '7600', '7700'))
+        exists(
+            select 1 from unnest(w.squawks_7d) as sq
+            where sq in ('7500', '7600', '7700'))
             as emergency_code_7d
     from this_week as w
     inner join aircraft as a using (address_type, address)
@@ -134,7 +146,8 @@ components as (
     select
         *,
         -- Type rarity: 1 aircraft of the type ever heard here = 1.0.
-        least(1.0,
+        least(
+            1.0,
             case
                 when type_aircraft_heard is null then 0
                 when type_aircraft_heard = 1 then 1.0
@@ -142,40 +155,53 @@ components as (
                 when type_aircraft_heard <= 5 then 0.5
                 when type_aircraft_heard <= 10 then 0.25
                 else 0
-            end + if(type_first_seen_this_week, 0.3, 0)) as type_score,
+            end + if(type_first_seen_this_week, 0.3, 0)
+        ) as type_score,
         if(is_military, 1.0, 0) as military_score,
         -- Civil government and public-safety owners or operators (organizations
         -- only). Military aircraft are government-owned by definition; the
         -- military signal already covers them.
-        if(not is_military and (registrant_category = 'Government'
-           or regexp_contains(upper(concat(coalesce(owner_name, ''), ' ', coalesce(operator, ''))),
-                r'POLICE|SHERIFF|COUNTY|STATE OF|CITY OF|UNITED STATES|DEPARTMENT|FEDERAL|FOREST SERVICE|BUREAU|CUSTOMS|BORDER|UNIVERSITY')),
-           1.0, 0) as ownership_score,
+        if(not is_military and (
+            registrant_category = 'Government'
+            or regexp_contains(
+                upper(concat(coalesce(owner_name, ''), ' ', coalesce(operator, ''))),
+                r'POLICE|SHERIFF|COUNTY|STATE OF|CITY OF|UNITED STATES|DEPARTMENT|FEDERAL|FOREST SERVICE|BUREAU|CUSTOMS|BORDER|UNIVERSITY'  -- noqa: LT05
+            )
+        ),
+        1.0, 0) as ownership_score,
         if(country is not null and country != 'United States' and aircraft_kind != 'Airline', 1.0, 0)
             as foreign_score,
         -- Vintage civil aircraft (FAA year of manufacture): 1975 or earlier.
-        if(not is_military and year_manufactured is not null and year_manufactured <= 1975
-           and aircraft_kind != 'Airline', 1.0, 0) as vintage_score,
+        if(
+            not is_military and year_manufactured is not null and year_manufactured <= 1975
+            and aircraft_kind != 'Airline', 1.0, 0
+        ) as vintage_score,
         -- Circling or low flying, relative to the aircraft's own last 28 days:
         -- an aircraft that circles every week (flight schools) scores low.
         case
             when positioned_snapshots_7d = 0 then null
-            else least(1.0,
+            else least(
+                1.0,
                 case
                     when coalesce(max_circling_ratio_7d, 0) < 3 then 0
                     when p90_circling_ratio_prior_28d is null then 0.5
                     when p90_circling_ratio_prior_28d >= 3 then 0.1
                     else 1.0
                 end
-                + if(low_away_snapshots_7d >= 10 and coalesce(p90_circling_ratio_prior_28d, 0) < 3, 0.3, 0))
+                + if(low_away_snapshots_7d >= 10 and coalesce(p90_circling_ratio_prior_28d, 0) < 3, 0.3, 0)
+            )
         end as path_score,
         -- Aircraft-level novelty only once there is history to compare with.
-        if(novelty_enabled,
-           least(1.0,
-               if(first_seen_this_week, 0.6, 0)
-               + if(not first_seen_this_week and sightings_prior_28d = 0, 0.6, 0)
-               + if(sightings_7d >= 5 and sightings_7d > 3 * sightings_prior_28d / 4, 0.4, 0)),
-           null) as frequency_score,
+        if(
+            novelty_enabled,
+            least(
+                1.0,
+                if(first_seen_this_week, 0.6, 0)
+                + if(not first_seen_this_week and sightings_prior_28d = 0, 0.6, 0)
+                + if(sightings_7d >= 5 and sightings_7d > 3 * sightings_prior_28d / 4, 0.4, 0)
+            ),
+            null
+        ) as frequency_score,
         if(emergency_code_7d, 1.0, 0) as emergency_score
     from features
 ),
@@ -186,48 +212,74 @@ scored as (
         -- A type heard only once here outweighs "military": the owner's
         -- reference week prized rare and vintage civil aircraft as much as
         -- military ones (evals/golden_week.json).
-        (1.0 * emergency_score
-         + 0.45 * type_score
-         + 0.20 * military_score
-         + 0.15 * vintage_score
-         + 0.20 * ownership_score
-         + 0.25 * coalesce(path_score, 0)
-         + 0.15 * coalesce(frequency_score, 0)
-         + 0.10 * foreign_score)
+        (
+            1.0 * emergency_score
+            + 0.45 * type_score
+            + 0.20 * military_score
+            + 0.15 * vintage_score
+            + 0.20 * ownership_score
+            + 0.25 * coalesce(path_score, 0)
+            + 0.15 * coalesce(frequency_score, 0)
+            + 0.10 * foreign_score
+        )
         -- Airliners are routine here unless something unusual happened.
         * if(aircraft_kind = 'Airline' and emergency_score = 0, 0.3, 1.0) as notable_score,
         -- Parts can be missing (e.g. no type name); drop reasons that came out null.
-        array(select reason from unnest(array_concat(
-            if(emergency_score > 0, [concat('Squawked an emergency code (',
-                (select string_agg(distinct sq, ', ') from unnest(squawks_7d) as sq
-                 where sq in ('7500', '7600', '7700')), ')')], []),
-            if(type_aircraft_heard = 1, [concat('Only ', coalesce(type_name, designator), ' heard here')],
-               if(type_score >= 0.25, [concat('Rare type here: ', cast(type_aircraft_heard as string),
-                                              ' aircraft of type ', designator, ' heard')], [])),
-            if(type_first_seen_this_week and type_aircraft_heard > 1,
-               [concat('Type ', designator, ' first heard here this week')], []),
-            if(is_military, [concat('Military (', array_to_string(military_rules, ', '), ')')], []),
-            if(ownership_score > 0, [concat('Government or public-safety owner/operator: ',
-                                            coalesce(owner_name, operator, registrant_category, 'listed'))], []),
-            if(foreign_score > 0, [concat('Foreign-registered (', country, '), not an airline')], []),
-            if(vintage_score > 0, [concat('Vintage: built in ', cast(year_manufactured as string))], []),
-            if(coalesce(path_score, 0) > 0.2 and max_circling_ratio_7d >= 3,
-               [concat('Circled more than usual for this aircraft (circling ratio ',
-                       cast(round(max_circling_ratio_7d, 1) as string), ')')], []),
-            if(coalesce(path_score, 0) > 0 and low_away_snapshots_7d >= 10
-               and coalesce(p90_circling_ratio_prior_28d, 0) < 3,
-               [concat('Flew below 4,500 ft away from airports (', cast(low_away_snapshots_7d as string),
-                       ' snapshots)')], []),
-            if(coalesce(frequency_score, 0) > 0, ['Unusual frequency: new, returning or a spike in visits'], [])
-        )) as reason where reason is not null) as reasons
+        array(select reason from
+            unnest(array_concat(
+                if(emergency_score > 0, [concat(
+                    'Squawked an emergency code (',
+                    (
+                        select string_agg(distinct sq, ', ') from unnest(squawks_7d) as sq
+                        where sq in ('7500', '7600', '7700')
+                    ), ')'
+                )], []),
+                if(
+                    type_aircraft_heard = 1, [concat('Only ', coalesce(type_name, designator), ' heard here')],
+                    if(type_score >= 0.25, [concat(
+                        'Rare type here: ', cast(type_aircraft_heard as string),
+                        ' aircraft of type ', designator, ' heard'
+                    )], [])
+                ),
+                if(
+                    type_first_seen_this_week and type_aircraft_heard > 1,
+                    [concat('Type ', designator, ' first heard here this week')], []
+                ),
+                if(is_military, [concat('Military (', array_to_string(military_rules, ', '), ')')], []),
+                if(ownership_score > 0, [concat(
+                    'Government or public-safety owner/operator: ',
+                    coalesce(owner_name, operator, registrant_category, 'listed')
+                )], []),
+                if(foreign_score > 0, [concat('Foreign-registered (', country, '), not an airline')], []),
+                if(vintage_score > 0, [concat('Vintage: built in ', cast(year_manufactured as string))], []),
+                if(
+                    coalesce(path_score, 0) > 0.2 and max_circling_ratio_7d >= 3,
+                    [concat(
+                        'Circled more than usual for this aircraft (circling ratio ',
+                        cast(round(max_circling_ratio_7d, 1) as string), ')'
+                    )], []
+                ),
+                if(
+                    coalesce(path_score, 0) > 0 and low_away_snapshots_7d >= 10
+                    and coalesce(p90_circling_ratio_prior_28d, 0) < 3,
+                    [concat(
+                        'Flew below 4,500 ft away from airports (', cast(low_away_snapshots_7d as string),
+                        ' snapshots)'
+                    )], []
+                ),
+                if(coalesce(frequency_score, 0) > 0, ['Unusual frequency: new, returning or a spike in visits'], [])
+            )) as reason
+        where reason is not null) as reasons
     from components
 )
 
 select
     *,
     -- Rank within the aircraft's type, so a list can show a few of each type.
-    row_number() over (partition by window_end, coalesce(designator, address)
-                       order by notable_score desc, address) as rank_within_type,
+    row_number() over (
+        partition by window_end, coalesce(designator, address)
+        order by notable_score desc, address asc
+    ) as rank_within_type,
     count(*) over (partition by window_end, coalesce(designator, address)) as candidates_of_type
 from scored
 where notable_score > 0

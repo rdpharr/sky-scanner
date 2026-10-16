@@ -1,6 +1,10 @@
 -- Seconds spent listening on each band in each UTC hour, clipped to the hour.
 with intervals as (
-    select receiver_id, band_mhz, started_at, ended_at
+    select
+        receiver_id,
+        band_mhz,
+        started_at,
+        ended_at
     from {{ ref('stg_capture_intervals') }}
     where ended_at is not null
 ),
@@ -10,7 +14,8 @@ hours as (
     from unnest(generate_timestamp_array(
         (select timestamp_trunc(min(started_at), hour) from intervals),
         (select timestamp_trunc(max(ended_at), hour) from intervals),
-        interval 1 hour)) as hour_start
+        interval 1 hour
+    )) as hour_start
 ),
 
 clipped as (
@@ -18,12 +23,15 @@ clipped as (
         i.receiver_id,
         h.hour_start,
         i.band_mhz,
-        timestamp_diff(least(i.ended_at, timestamp_add(h.hour_start, interval 1 hour)),
-                       greatest(i.started_at, h.hour_start), millisecond) / 1000 as seconds
+        timestamp_diff(
+            least(i.ended_at, timestamp_add(h.hour_start, interval 1 hour)),
+            greatest(i.started_at, h.hour_start), millisecond
+        ) / 1000 as seconds
     from intervals as i
     inner join hours as h
-        on i.started_at < timestamp_add(h.hour_start, interval 1 hour)
-       and i.ended_at > h.hour_start
+        on
+            i.started_at < timestamp_add(h.hour_start, interval 1 hour)
+            and i.ended_at > h.hour_start
 )
 
 select

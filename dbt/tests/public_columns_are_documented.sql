@@ -9,7 +9,11 @@
              'pub_callword_lookups', 'pub_data_health', 'pub_dbt_runs', 'pub_definitions'] -%}
 -- depends_on: {{ ref(m) }}
 {% endfor %}
-select table_name, column_name
-from `{{ target.project }}`.`{{ generate_schema_name('public', none) }}`.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS
-where column_name = field_path
-  and coalesce(trim(description), '') = ''
+select
+    table_name,
+    column_name
+-- BigQuery names INFORMATION_SCHEMA views in upper case.
+from `{{ target.project }}`.`{{ generate_schema_name('public', none) }}`.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS  -- noqa: CP02, LT05
+where
+    column_name = field_path
+    and coalesce(trim(description), '') = ''

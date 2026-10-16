@@ -14,7 +14,7 @@ import hashlib
 import io
 import re
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from xml.etree import ElementTree
 
@@ -68,7 +68,7 @@ def parse_opensky_database(
     type code, operator, or owner, are omitted. ``registered_owner`` holds
     OpenSky's crowdsourced ``owner`` value; it is not an official registry.
     """
-    retrieved = (retrieved_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    retrieved = (retrieved_at or datetime.now(UTC)).astimezone(UTC)
     retrieved_text = retrieved.isoformat().replace("+00:00", "Z")
     dataset_hash = hashlib.sha256(data).hexdigest()
     reader = csv.reader(io.StringIO(data.decode("utf-8", errors="replace")), quotechar="'")
@@ -86,7 +86,7 @@ def parse_opensky_database(
         if len(row) != len(header):
             continue
 
-        def get(name: str) -> str | None:
+        def get(name: str, row: list[str] = row) -> str | None:
             position = index.get(name)
             return _clean(row[position]) if position is not None else None
 
@@ -107,8 +107,10 @@ def parse_opensky_database(
             "operator_icao": get("operatorIcao"),
             "country": get("country"),
         }
-        if not any(record[key] for key in ("registration", "model", "icao_type_code",
-                                           "operator", "operator_icao", "registered_owner")):
+        if not any(
+            record[key]
+            for key in ("registration", "model", "icao_type_code", "operator", "operator_icao", "registered_owner")
+        ):
             continue
         record.update(source_url=source_url, retrieved_at=retrieved_text, dataset_hash=dataset_hash)
         results.append(record)

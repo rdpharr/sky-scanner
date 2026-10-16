@@ -1,7 +1,7 @@
 import os
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("GCP_PROJECT", "sky-scanner-pharr")
-import server  # noqa: E402
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
+
+import server  # noqa: E402
 
 
 def ref(project, dataset, table="t"):
@@ -38,15 +39,26 @@ class DryRunTests(unittest.TestCase):
 
 class HelperTests(unittest.TestCase):
     def test_jsonable(self):
-        t = datetime(2026, 10, 16, tzinfo=timezone.utc)
-        self.assertEqual(server.jsonable({"t": t, "n": Decimal("1.5"), "l": [t]}),
-                         {"t": "2026-10-16T00:00:00+00:00", "n": 1.5, "l": ["2026-10-16T00:00:00+00:00"]})
+        t = datetime(2026, 10, 16, tzinfo=UTC)
+        self.assertEqual(
+            server.jsonable({"t": t, "n": Decimal("1.5"), "l": [t]}),
+            {"t": "2026-10-16T00:00:00+00:00", "n": 1.5, "l": ["2026-10-16T00:00:00+00:00"]},
+        )
 
     def test_rounds_measurements_but_not_coordinates(self):
-        self.assertEqual(server.jsonable({"kt": 454.881866, "alt": 27000.0, "nm": 8.68890993, "ratio": 1.0000152,
-                                          "latitude": 36.3456, "longitude": -115.3512}),
-                         {"kt": 455, "alt": 27000, "nm": 8.7, "ratio": 1.0,
-                          "latitude": 36.3456, "longitude": -115.3512})
+        self.assertEqual(
+            server.jsonable(
+                {
+                    "kt": 454.881866,
+                    "alt": 27000.0,
+                    "nm": 8.68890993,
+                    "ratio": 1.0000152,
+                    "latitude": 36.3456,
+                    "longitude": -115.3512,
+                }
+            ),
+            {"kt": 455, "alt": 27000, "nm": 8.7, "ratio": 1.0, "latitude": 36.3456, "longitude": -115.3512},
+        )
 
     def test_clamp_bounds_tool_arguments(self):
         self.assertEqual(server.clamp(10_000, 1, 365), 365)
@@ -66,6 +78,7 @@ class DateRangeTests(unittest.TestCase):
     def test_defaults_to_the_last_seven_complete_days(self):
         start, end = server.date_range("", "")
         from datetime import date
+
         self.assertEqual((date.fromisoformat(end) - date.fromisoformat(start)).days, 7)
 
     def test_end_date_is_inclusive(self):
@@ -82,6 +95,7 @@ class DateRangeTests(unittest.TestCase):
 class ToolTests(unittest.TestCase):
     def test_every_tool_is_read_only(self):
         import asyncio
+
         tools = asyncio.run(server.mcp.list_tools())
         self.assertGreaterEqual(len(tools), 19)
         for tool in tools:
@@ -98,9 +112,8 @@ class ToolTests(unittest.TestCase):
 
     def test_run_sql_is_disabled_without_a_configured_token(self):
         ctx = SimpleNamespace(headers={"x-sky-scanner-token": ""})
-        with patch.object(server, "SQL_TOKEN", ""):
-            with self.assertRaises(ToolError):
-                server.run_sql("select 1", ctx)
+        with patch.object(server, "SQL_TOKEN", ""), self.assertRaises(ToolError):
+            server.run_sql("select 1", ctx)
 
 
 if __name__ == "__main__":

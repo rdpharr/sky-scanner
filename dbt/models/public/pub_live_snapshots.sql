@@ -7,7 +7,8 @@ with recent as (
     where bucket_start >= timestamp_sub(current_timestamp(), interval 30 minute)
     qualify row_number() over (
         partition by bucket_start, receiver_id, address_type, address, frequency_hz
-        order by written_at desc, _replicated_at desc) = 1
+        order by written_at desc, _replicated_at desc
+    ) = 1
 )
 
 select

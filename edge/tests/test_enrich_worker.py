@@ -1,4 +1,3 @@
-import hashlib
 import io
 import json
 import unittest
@@ -105,7 +104,9 @@ class EnrichmentWorkerTests(unittest.TestCase):
         def fail_download():
             raise OSError("offline")
 
-        worker = EnrichmentWorker(storage_factory=lambda: storage, download=fail_download, min_records=1, emit=lambda _: None)
+        worker = EnrichmentWorker(
+            storage_factory=lambda: storage, download=fail_download, min_records=1, emit=lambda _: None
+        )
         with self.assertRaisesRegex(OSError, "offline"):
             worker.process_once()
         self.assertEqual(storage.saved, [])
@@ -114,7 +115,9 @@ class EnrichmentWorkerTests(unittest.TestCase):
     def test_empty_registry_rejected_without_import(self):
         storage = Storage()
         worker = EnrichmentWorker(
-            storage_factory=lambda: storage, download=lambda: registry_zip(0), min_records=1,
+            storage_factory=lambda: storage,
+            download=lambda: registry_zip(0),
+            min_records=1,
             emit=lambda _: None,
         )
         with self.assertRaisesRegex(ValueError, "only 0 records"):
@@ -125,7 +128,9 @@ class EnrichmentWorkerTests(unittest.TestCase):
         storage = Storage(exists=True)
         output = []
         worker = EnrichmentWorker(
-            storage_factory=lambda: storage, download=lambda: registry_zip(), min_records=2,
+            storage_factory=lambda: storage,
+            download=lambda: registry_zip(),
+            min_records=2,
             emit=output.append,
         )
         summary = worker.process_once()
@@ -144,7 +149,9 @@ class EnrichmentWorkerTests(unittest.TestCase):
 
         storage = FillingStorage(exists=True)  # dataset imported, fields missing
         worker = EnrichmentWorker(
-            storage_factory=lambda: storage, download=lambda: registry_zip(), min_records=2,
+            storage_factory=lambda: storage,
+            download=lambda: registry_zip(),
+            min_records=2,
             emit=lambda _: None,
         )
         summary = worker.process_once()
@@ -155,7 +162,9 @@ class EnrichmentWorkerTests(unittest.TestCase):
     def test_valid_registry_saved_atomically_via_storage_adapter(self):
         storage = Storage()
         worker = EnrichmentWorker(
-            storage_factory=lambda: storage, download=lambda: registry_zip(), min_records=2,
+            storage_factory=lambda: storage,
+            download=lambda: registry_zip(),
+            min_records=2,
             emit=lambda _: None,
         )
         summary = worker.process_once()
@@ -281,6 +290,7 @@ class MilitaryReferenceWorkerTests(unittest.TestCase):
 
 # --- CallwordWorker ------------------------------------------------------------
 
+
 class CallwordStorage:
     def __init__(self, codes_rows, callsigns_rows, fresh_rows):
         cursor = MagicMock()
@@ -303,8 +313,7 @@ class CallwordWorkerTests(unittest.TestCase):
         )
         fetch = MagicMock(return_value=("https://wwi/TALON", {"types": []}))
         sleep = MagicMock()
-        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=sleep,
-                                emit=lambda _: None)
+        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=sleep, emit=lambda _: None)
         summary = worker.process_once()
         fetch.assert_called_once_with("TALON")
         self.assertEqual(summary["looked_up"], ["TALON"])
@@ -314,22 +323,31 @@ class CallwordWorkerTests(unittest.TestCase):
 
     def test_not_found_result_is_saved_as_not_found(self):
         storage = CallwordStorage(
-            codes_rows=[], callsigns_rows=[("GHOST1",)], fresh_rows=[],
+            codes_rows=[],
+            callsigns_rows=[("GHOST1",)],
+            fresh_rows=[],
         )
         fetch = MagicMock(return_value=("https://wwi/GHOST", None))
-        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=MagicMock(),
-                                emit=lambda _: None)
+        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=MagicMock(), emit=lambda _: None)
         worker.process_once()
         self.assertEqual(storage.saved, [("GHOST", "not_found", "https://wwi/GHOST", None)])
 
     def test_max_lookups_limits_requests_and_sleeps_between_not_before_first(self):
         storage = CallwordStorage(
-            codes_rows=[], callsigns_rows=[("ALPHA1",), ("BRAVO22",)], fresh_rows=[],
+            codes_rows=[],
+            callsigns_rows=[("ALPHA1",), ("BRAVO22",)],
+            fresh_rows=[],
         )
         fetch = MagicMock(side_effect=[("u1", {"types": []}), ("u2", None)])
         sleep = MagicMock()
-        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=sleep,
-                                max_lookups=2, pause_seconds=3, emit=lambda _: None)
+        worker = CallwordWorker(
+            storage_factory=lambda: storage,
+            fetch=fetch,
+            sleep=sleep,
+            max_lookups=2,
+            pause_seconds=3,
+            emit=lambda _: None,
+        )
         summary = worker.process_once()
         self.assertEqual(fetch.call_args_list, [call("ALPHA"), call("BRAVO")])
         sleep.assert_called_once_with(3)
@@ -337,12 +355,15 @@ class CallwordWorkerTests(unittest.TestCase):
 
     def test_max_lookups_reports_pending_and_does_not_sleep_for_single_lookup(self):
         storage = CallwordStorage(
-            codes_rows=[], callsigns_rows=[("ALPHA1",), ("BRAVO22",)], fresh_rows=[],
+            codes_rows=[],
+            callsigns_rows=[("ALPHA1",), ("BRAVO22",)],
+            fresh_rows=[],
         )
         fetch = MagicMock(return_value=("u", {"types": []}))
         sleep = MagicMock()
-        worker = CallwordWorker(storage_factory=lambda: storage, fetch=fetch, sleep=sleep,
-                                max_lookups=1, emit=lambda _: None)
+        worker = CallwordWorker(
+            storage_factory=lambda: storage, fetch=fetch, sleep=sleep, max_lookups=1, emit=lambda _: None
+        )
         summary = worker.process_once()
         self.assertEqual(summary["looked_up"], ["ALPHA"])
         self.assertEqual(summary["pending"], 1)
@@ -350,6 +371,7 @@ class CallwordWorkerTests(unittest.TestCase):
 
 
 # --- TypeImageWorker ------------------------------------------------------------
+
 
 class TypeImageStorage:
     def __init__(self, cycles):
@@ -380,31 +402,48 @@ class TypeImageWorkerTests(unittest.TestCase):
         storage = TypeImageStorage([([], [("FRESH",)])])
         resolve = MagicMock(return_value=("search", {"title": "x"}))
         sleep = MagicMock()
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=lambda: {},
-                                 resolve=resolve, sleep=sleep, emit=lambda _: None)
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=rows):
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=lambda: {},
+            resolve=resolve,
+            sleep=sleep,
+            emit=lambda _: None,
+        )
+        with patch("sky_scanner.enrich_worker.identity.summarize", return_value=rows):
             summary = worker.process_once()
-        self.assertEqual(resolve.call_args_list, [
-            call("B738", "Boeing 737-800", {}), call("A320", "Airbus A320", {}),
-        ])
-        self.assertEqual(storage.saved, [
-            ("B738", "Boeing 737-800", "search", {"title": "x"}),
-            ("A320", "Airbus A320", "search", {"title": "x"}),
-        ])
+        self.assertEqual(
+            resolve.call_args_list,
+            [
+                call("B738", "Boeing 737-800", {}),
+                call("A320", "Airbus A320", {}),
+            ],
+        )
+        self.assertEqual(
+            storage.saved,
+            [
+                ("B738", "Boeing 737-800", "search", {"title": "x"}),
+                ("A320", "Airbus A320", "search", {"title": "x"}),
+            ],
+        )
         self.assertEqual(summary["resolved"], ["B738", "A320"])
         self.assertEqual(summary["pending"], 0)
         sleep.assert_called_once_with(3)
 
     def test_max_types_limits_requests_and_reports_pending(self):
-        rows = [{"tc": "AAAA", "model": "m1"}, {"tc": "BBBB", "model": "m2"},
-                {"tc": "CCCC", "model": "m3"}]
+        rows = [{"tc": "AAAA", "model": "m1"}, {"tc": "BBBB", "model": "m2"}, {"tc": "CCCC", "model": "m3"}]
         storage = TypeImageStorage([([], [])])
         resolve = MagicMock(return_value=("search", None))
         sleep = MagicMock()
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=lambda: {},
-                                 resolve=resolve, sleep=sleep, max_types=2, pause_seconds=5,
-                                 emit=lambda _: None)
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=rows):
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=lambda: {},
+            resolve=resolve,
+            sleep=sleep,
+            max_types=2,
+            pause_seconds=5,
+            emit=lambda _: None,
+        )
+        with patch("sky_scanner.enrich_worker.identity.summarize", return_value=rows):
             summary = worker.process_once()
         self.assertEqual(resolve.call_count, 2)
         sleep.assert_called_once_with(5)
@@ -415,9 +454,14 @@ class TypeImageWorkerTests(unittest.TestCase):
         rows = [{"tc": "AAAA", "model": "m1"}, {"tc": "BBBB", "model": "m2"}]
         storage = TypeImageStorage([([], [])])
         resolve = MagicMock(side_effect=urllib.error.HTTPError("http://x", 429, "too many", None, None))
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=lambda: {},
-                                 resolve=resolve, sleep=MagicMock(), emit=lambda _: None)
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=rows):
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=lambda: {},
+            resolve=resolve,
+            sleep=MagicMock(),
+            emit=lambda _: None,
+        )
+        with patch("sky_scanner.enrich_worker.identity.summarize", return_value=rows):
             summary = worker.process_once()
         self.assertEqual(summary["resolved"], [])
         self.assertEqual(summary["pending"], 2)
@@ -427,20 +471,32 @@ class TypeImageWorkerTests(unittest.TestCase):
         rows = [{"tc": "AAAA", "model": "m1"}]
         storage = TypeImageStorage([([], [])])
         resolve = MagicMock(side_effect=urllib.error.HTTPError("http://x", 500, "boom", None, None))
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=lambda: {},
-                                 resolve=resolve, sleep=MagicMock(), emit=lambda _: None)
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=rows):
-            with self.assertRaises(urllib.error.HTTPError):
-                worker.process_once()
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=lambda: {},
+            resolve=resolve,
+            sleep=MagicMock(),
+            emit=lambda _: None,
+        )
+        with (
+            patch("sky_scanner.enrich_worker.identity.summarize", return_value=rows),
+            self.assertRaises(urllib.error.HTTPError),
+        ):
+            worker.process_once()
 
     def test_designator_list_fetched_once_and_reused_across_cycles(self):
         storage = TypeImageStorage([([], []), ([], [])])
         fetch_designators = MagicMock(return_value={"B738": "Boeing 737"})
         resolve = MagicMock(return_value=("designator_list", {"title": "Boeing 737"}))
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=fetch_designators,
-                                 resolve=resolve, sleep=MagicMock(), emit=lambda _: None)
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=fetch_designators,
+            resolve=resolve,
+            sleep=MagicMock(),
+            emit=lambda _: None,
+        )
         rows = [{"tc": "B738", "model": "Boeing 737-800"}]
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=rows):
+        with patch("sky_scanner.enrich_worker.identity.summarize", return_value=rows):
             worker.process_once()
             worker.process_once()
         fetch_designators.assert_called_once()
@@ -448,14 +504,20 @@ class TypeImageWorkerTests(unittest.TestCase):
 
     def test_connection_is_closed(self):
         storage = TypeImageStorage([([], [])])
-        worker = TypeImageWorker(storage_factory=lambda: storage, fetch_designators=lambda: {},
-                                 resolve=MagicMock(), sleep=MagicMock(), emit=lambda _: None)
-        with patch("sky_scanner.enrich_worker.aircraft_log.summarize", return_value=[]):
+        worker = TypeImageWorker(
+            storage_factory=lambda: storage,
+            fetch_designators=lambda: {},
+            resolve=MagicMock(),
+            sleep=MagicMock(),
+            emit=lambda _: None,
+        )
+        with patch("sky_scanner.enrich_worker.identity.summarize", return_value=[]):
             worker.process_once()
         self.assertTrue(storage.connection.close.called)
 
 
 # --- run_forever ----------------------------------------------------------------
+
 
 class FakeClock:
     def __init__(self):
@@ -499,8 +561,7 @@ class RunForeverTests(unittest.TestCase):
                 raise StopIteration()
 
         with self.assertRaises(StopIteration):
-            run_forever([bad, good], sleep=fake_sleep, clock=clock.now,
-                       retry_seconds=5, max_retry_seconds=300)
+            run_forever([bad, good], sleep=fake_sleep, clock=clock.now, retry_seconds=5, max_retry_seconds=300)
         # bad retries with a growing backoff (5, 10, 20...) so it is invoked
         # several times in the window where good (interval 50) only runs once.
         self.assertEqual(bad.process_once.call_count, 3)
@@ -532,6 +593,7 @@ class RunForeverTests(unittest.TestCase):
 
 
 # --- Tar1090DbWorker -----------------------------------------------------------
+
 
 class Tar1090Cursor:
     def __init__(self, connection):
@@ -578,10 +640,10 @@ class Tar1090DbWorkerTests(unittest.TestCase):
         storage = Tar1090Storage(["AAAAAA", "BBBBBB"])
         clock = FakeClock()
         download = MagicMock(return_value=b"raw")
-        with patch("sky_scanner.enrich_worker.tar1090db.parse",
-                   return_value=("hash1", TAR1090_TABLE)) as parse:
-            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
-                                     clock=clock.now, emit=lambda _: None)
+        with patch("sky_scanner.enrich_worker.tar1090db.parse", return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(
+                storage_factory=lambda: storage, download=download, clock=clock.now, emit=lambda _: None
+            )
             summary = worker.process_once()
         parse.assert_called_once()
         download.assert_called_once()
@@ -601,10 +663,10 @@ class Tar1090DbWorkerTests(unittest.TestCase):
         storage = Tar1090Storage(["AAAAAA"])
         clock = FakeClock()
         download = MagicMock(return_value=b"raw")
-        with patch("sky_scanner.enrich_worker.tar1090db.parse",
-                   return_value=("hash1", TAR1090_TABLE)) as parse:
-            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
-                                     clock=clock.now, emit=lambda _: None)
+        with patch("sky_scanner.enrich_worker.tar1090db.parse", return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(
+                storage_factory=lambda: storage, download=download, clock=clock.now, emit=lambda _: None
+            )
             worker.process_once()
             clock.advance(60)
             storage.connection.queries.clear()
@@ -619,10 +681,10 @@ class Tar1090DbWorkerTests(unittest.TestCase):
         storage = Tar1090Storage(["AAAAAA"])
         clock = FakeClock()
         download = MagicMock(return_value=b"raw")
-        with patch("sky_scanner.enrich_worker.tar1090db.parse",
-                   return_value=("hash1", TAR1090_TABLE)) as parse:
-            worker = Tar1090DbWorker(storage_factory=lambda: storage, download=download,
-                                     clock=clock.now, emit=lambda _: None)
+        with patch("sky_scanner.enrich_worker.tar1090db.parse", return_value=("hash1", TAR1090_TABLE)) as parse:
+            worker = Tar1090DbWorker(
+                storage_factory=lambda: storage, download=download, clock=clock.now, emit=lambda _: None
+            )
             worker.process_once()
             clock.advance(DAILY_SECONDS + 1)
             storage.connection.queries.clear()
@@ -636,11 +698,13 @@ class Tar1090DbWorkerTests(unittest.TestCase):
     def test_no_save_when_nothing_matched(self):
         storage = Tar1090Storage(["ZZZZZZ"])  # not present in the table
         clock = FakeClock()
-        with patch("sky_scanner.enrich_worker.tar1090db.parse",
-                   return_value=("hash1", TAR1090_TABLE)):
-            worker = Tar1090DbWorker(storage_factory=lambda: storage,
-                                     download=MagicMock(return_value=b"raw"),
-                                     clock=clock.now, emit=lambda _: None)
+        with patch("sky_scanner.enrich_worker.tar1090db.parse", return_value=("hash1", TAR1090_TABLE)):
+            worker = Tar1090DbWorker(
+                storage_factory=lambda: storage,
+                download=MagicMock(return_value=b"raw"),
+                clock=clock.now,
+                emit=lambda _: None,
+            )
             summary = worker.process_once()
         self.assertEqual(storage.saved, [])
         self.assertEqual(summary["matched"], 0)

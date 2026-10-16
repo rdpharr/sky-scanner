@@ -24,5 +24,5 @@
 select *
 from {{ ref('stg_aircraft_snapshots') }}
 {% if is_incremental() %}
-where bucket_start >= timestamp '{{ cutoff }}'
+    where bucket_start >= timestamp '{{ cutoff }}'
 {% endif %}

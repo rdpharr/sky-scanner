@@ -23,14 +23,12 @@ import io
 import re
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 PLANE_ALERT_SOURCE = "plane_alert_mil"
-PLANE_ALERT_MIL_URL = ("https://raw.githubusercontent.com/sdr-enthusiasts/plane-alert-db/"
-                       "main/plane-alert-mil.csv")
-OPERATOR_CODES_URL = ("https://raw.githubusercontent.com/vradarserver/standing-data/"
-                      "main/airlines/schema-01/airlines.csv")
+PLANE_ALERT_MIL_URL = "https://raw.githubusercontent.com/sdr-enthusiasts/plane-alert-db/main/plane-alert-mil.csv"
+OPERATOR_CODES_URL = "https://raw.githubusercontent.com/vradarserver/standing-data/main/airlines/schema-01/airlines.csv"
 WWI_FAMILY_URL = "https://www.warwatchintel.com/codex/callsign_family/{word}"
 USER_AGENT = "SkyScanner/1.0 (personal receive-only ADS-B station; cached lookups)"
 MAX_REFERENCE_BYTES = 20 * 1024 * 1024
@@ -38,7 +36,9 @@ MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 MILITARY_OPERATOR = re.compile(
     r"air force|navy|naval|army|marine|military|coast guard|armed forces|defen[cs]e force|"
     r"canadian forces|air mobility|special air mission|priority air transport|luftwaffe|"
-    r"armee|aeronautica militare|fuerza a[eé]rea", re.I)
+    r"armee|aeronautica militare|fuerza a[eé]rea",
+    re.I,
+)
 US_MILITARY_BLOCK = ("AE", "AF")
 CALLWORD = re.compile(r"^([A-Z]{3,})(\d{1,4}[A-Z]?)$")
 
@@ -68,10 +68,11 @@ def _clean(value: Any) -> str | None:
     return text if text and not re.fullmatch(r"\?+", text) else None
 
 
-def parse_plane_alert_mil(data: bytes, *, source_url: str = PLANE_ALERT_MIL_URL,
-                          retrieved_at: datetime | None = None) -> list[dict[str, Any]]:
+def parse_plane_alert_mil(
+    data: bytes, *, source_url: str = PLANE_ALERT_MIL_URL, retrieved_at: datetime | None = None
+) -> list[dict[str, Any]]:
     """Parse plane-alert-mil.csv into metadata records (one per ICAO address)."""
-    retrieved = (retrieved_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    retrieved = (retrieved_at or datetime.now(UTC)).astimezone(UTC)
     dataset_hash = hashlib.sha256(data).hexdigest()
     reader = csv.DictReader(io.StringIO(data.decode("utf-8-sig", errors="replace")))
     # Headers carry display prefixes such as "$ICAO" and "$#Tag 2".
@@ -85,18 +86,21 @@ def parse_plane_alert_mil(data: bytes, *, source_url: str = PLANE_ALERT_MIL_URL,
             continue
         seen.add(address)
         tags = [t for t in (_clean(row.get(k)) for k in ("Tag 1", "Tag 2", "Tag 3")) if t]
-        records.append({
-            "address_type": "icao", "icao_address": address,
-            "registration": _clean(row.get("Registration")),
-            "operator": _clean(row.get("Operator")),
-            "model": _clean(row.get("Type")),
-            "icao_type_code": _clean(row.get("ICAO Type")),
-            "category": _clean(row.get("Category")),
-            "tags": ", ".join(tags) or None,
-            "source_url": source_url,
-            "retrieved_at": retrieved.isoformat().replace("+00:00", "Z"),
-            "dataset_hash": dataset_hash,
-        })
+        records.append(
+            {
+                "address_type": "icao",
+                "icao_address": address,
+                "registration": _clean(row.get("Registration")),
+                "operator": _clean(row.get("Operator")),
+                "model": _clean(row.get("Type")),
+                "icao_type_code": _clean(row.get("ICAO Type")),
+                "category": _clean(row.get("Category")),
+                "tags": ", ".join(tags) or None,
+                "source_url": source_url,
+                "retrieved_at": retrieved.isoformat().replace("+00:00", "Z"),
+                "dataset_hash": dataset_hash,
+            }
+        )
     return records
 
 
@@ -174,8 +178,8 @@ def parse_wwi_family(page: str, word: str) -> dict[str, Any] | None:
     def pairs(start: str, stop: str) -> list[dict[str, Any]]:
         if start not in lines:
             return []
-        items = lines[lines.index(start) + 1:]
-        items = items[:items.index(stop)] if stop in items else items
+        items = lines[lines.index(start) + 1 :]
+        items = items[: items.index(stop)] if stop in items else items
         out = []
         for name, count in zip(items[0::2], items[1::2]):
             if count.isdigit():

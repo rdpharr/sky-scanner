@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 _SNAPSHOT_FIELDS = {
     "callsign": "callsign",
@@ -44,9 +44,11 @@ DO NOTHING
 """
 
 
-_METADATA_COLUMNS = ("address_type, address, registration, manufacturer, model, "
-                     "aircraft_type, registered_owner, operator, icao_type_code, "
-                     "operator_icao, country, category, tags, registrant_type, year_mfr")
+_METADATA_COLUMNS = (
+    "address_type, address, registration, manufacturer, model, "
+    "aircraft_type, registered_owner, operator, icao_type_code, "
+    "operator_icao, country, category, tags, registrant_type, year_mfr"
+)
 
 _METADATA_STAGE_CREATE = """
 CREATE TEMP TABLE sky_metadata_stage (
@@ -131,17 +133,27 @@ def _stage_metadata(cursor, records: list[dict[str, Any]], batch_size: int) -> N
     cursor.execute(_METADATA_STAGE_CREATE)
     stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES ({', '.join(['%s'] * 15)})"
     for offset in range(0, len(records), batch_size):
-        chunk = records[offset:offset + batch_size]
-        values = [(
-            record.get("address_type", "icao"),
-            record.get("icao_address") or record.get("address"),
-            record.get("registration"), record.get("manufacturer"),
-            record.get("model"), record.get("aircraft_type"),
-            record.get("registered_owner"), record.get("operator"),
-            record.get("icao_type_code"), record.get("operator_icao"),
-            record.get("country"), record.get("category"), record.get("tags"),
-            record.get("registrant_type"), record.get("year_mfr"),
-        ) for record in chunk]
+        chunk = records[offset : offset + batch_size]
+        values = [
+            (
+                record.get("address_type", "icao"),
+                record.get("icao_address") or record.get("address"),
+                record.get("registration"),
+                record.get("manufacturer"),
+                record.get("model"),
+                record.get("aircraft_type"),
+                record.get("registered_owner"),
+                record.get("operator"),
+                record.get("icao_type_code"),
+                record.get("operator_icao"),
+                record.get("country"),
+                record.get("category"),
+                record.get("tags"),
+                record.get("registrant_type"),
+                record.get("year_mfr"),
+            )
+            for record in chunk
+        ]
         if values:
             cursor.executemany(stage_sql, values)
     cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
@@ -151,10 +163,10 @@ def _utc(value: Any) -> datetime:
     if isinstance(value, datetime):
         result = value
     else:
-        result = datetime.fromtimestamp(float(value), tz=timezone.utc)
+        result = datetime.fromtimestamp(float(value), tz=UTC)
     if result.tzinfo is None:
-        result = result.replace(tzinfo=timezone.utc)
-    return result.astimezone(timezone.utc)
+        result = result.replace(tzinfo=UTC)
+    return result.astimezone(UTC)
 
 
 def _field_value(fields: dict[str, Any], name: str) -> Any:
@@ -178,7 +190,7 @@ class PostgresStorage:
         self.connection = connection
 
     @classmethod
-    def from_env(cls) -> "PostgresStorage":
+    def from_env(cls) -> PostgresStorage:
         """Connect using SKY_SCANNER_DATABASE_URL; import psycopg only on use."""
         dsn = os.environ.get("SKY_SCANNER_DATABASE_URL") or os.environ.get("DATABASE_URL")
         if not dsn:
@@ -194,8 +206,11 @@ class PostgresStorage:
         self._execute_script(path.read_text(encoding="utf-8"))
 
     def register_receiver(
-        self, receiver_id: str, description: str | None = None,
-        latitude: float | None = None, longitude: float | None = None,
+        self,
+        receiver_id: str,
+        description: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
     ) -> None:
         if (latitude is None) != (longitude is None):
             raise ValueError("latitude and longitude must be supplied together")
@@ -220,10 +235,13 @@ class PostgresStorage:
             decoder_version=EXCLUDED.decoder_version, sample_config=EXCLUDED.sample_config,
             written_at=clock_timestamp()"""
         params = (
-            interval_id, interval["receiver_id"], int(interval["frequency_hz"]),
+            interval_id,
+            interval["receiver_id"],
+            int(interval["frequency_hz"]),
             _utc(interval["started_at"]),
             _utc(interval["ended_at"]) if interval.get("ended_at") is not None else None,
-            interval.get("decoder_version"), json.dumps(interval.get("sample_config") or {}),
+            interval.get("decoder_version"),
+            json.dumps(interval.get("sample_config") or {}),
         )
         self._execute(sql, params)
 
@@ -244,8 +262,9 @@ class PostgresStorage:
         finally:
             cursor.close()
 
-    def fill_added_fields(self, records: Iterable[dict[str, Any]], *,
-                          source_name: str = "faa_registry", batch_size: int = 5000) -> int:
+    def fill_added_fields(
+        self, records: Iterable[dict[str, Any]], *, source_name: str = "faa_registry", batch_size: int = 5000
+    ) -> int:
         """Fill fields added after versions were written into each aircraft's
         latest version, from an already-imported dataset. Creates no versions.
         Returns the number of versions filled."""
@@ -263,9 +282,15 @@ class PostgresStorage:
             cursor.close()
 
     def save_metadata_import(
-        self, records: Iterable[dict[str, Any]], *, source_url: str | None = None,
-        retrieved_at: Any | None = None, dataset_hash: str | None = None,
-        batch_size: int = 5000, source_name: str = "faa_registry", partial: bool = False,
+        self,
+        records: Iterable[dict[str, Any]],
+        *,
+        source_url: str | None = None,
+        retrieved_at: Any | None = None,
+        dataset_hash: str | None = None,
+        batch_size: int = 5000,
+        source_name: str = "faa_registry",
+        partial: bool = False,
     ) -> str:
         """Save import provenance and only the metadata versions that changed.
 
@@ -305,8 +330,13 @@ class PostgresStorage:
             if row:
                 import_id = row[0]
             _stage_metadata(cursor, records, batch_size)
-            params = {"source_name": source_name, "source_url": source_url, "retrieved_at": retrieved,
-                      "dataset_hash": dataset_hash, "import_id": import_id}
+            params = {
+                "source_name": source_name,
+                "source_url": source_url,
+                "retrieved_at": retrieved,
+                "dataset_hash": dataset_hash,
+                "import_id": import_id,
+            }
             cursor.execute(_METADATA_FILL_ADDED_FIELDS, params)
             cursor.execute(_METADATA_INSERT_CHANGED, params)
             changed = max(0, int(cursor.rowcount or 0))
@@ -316,8 +346,10 @@ class PostgresStorage:
             # Added, not set: a concurrent import of the same dataset waits on
             # the import row above, then finds nothing changed. Setting the
             # count would overwrite the first import's.
-            cursor.execute("UPDATE enrichment_imports SET changed_count = "
-                           "coalesce(changed_count, 0) + %s WHERE id = %s", (changed, import_id))
+            cursor.execute(
+                "UPDATE enrichment_imports SET changed_count = coalesce(changed_count, 0) + %s WHERE id = %s",
+                (changed, import_id),
+            )
             self.connection.commit()
             return str(import_id)
         except Exception:
@@ -327,7 +359,11 @@ class PostgresStorage:
             cursor.close()
 
     def replace_military_operator_codes(
-        self, codes: Iterable[dict[str, str]], *, source_url: str, retrieved_at: Any,
+        self,
+        codes: Iterable[dict[str, str]],
+        *,
+        source_url: str,
+        retrieved_at: Any,
         dataset_hash: str,
     ) -> str:
         """Atomically replace the military operator code set, recording provenance."""
@@ -352,7 +388,8 @@ class PostgresStorage:
             cursor.execute("DELETE FROM military_operator_codes")
             cursor.executemany(
                 "INSERT INTO military_operator_codes (code, name, import_id) VALUES (%s, %s, %s)",
-                [(c["code"], c["name"], import_id) for c in codes])
+                [(c["code"], c["name"], import_id) for c in codes],
+            )
             self.connection.commit()
             return str(import_id)
         except Exception:
@@ -361,19 +398,31 @@ class PostgresStorage:
         finally:
             cursor.close()
 
-    def save_callword_lookup(self, word: str, status: str, source_url: str,
-                             data: dict[str, Any] | None, fetched_at: Any | None = None) -> None:
+    def save_callword_lookup(
+        self, word: str, status: str, source_url: str, data: dict[str, Any] | None, fetched_at: Any | None = None
+    ) -> None:
         self._execute(
             """INSERT INTO callword_lookups (word, status, source_url, fetched_at, data)
                VALUES (%s, %s, %s, %s, %s::jsonb)
                ON CONFLICT (word) DO UPDATE SET status=EXCLUDED.status,
                source_url=EXCLUDED.source_url, fetched_at=EXCLUDED.fetched_at, data=EXCLUDED.data""",
-            (word, status, source_url, _iso_datetime(fetched_at or datetime.now(timezone.utc)),
-             json.dumps(data) if data is not None else None),
+            (
+                word,
+                status,
+                source_url,
+                _iso_datetime(fetched_at or datetime.now(UTC)),
+                json.dumps(data) if data is not None else None,
+            ),
         )
 
-    def save_type_image(self, designator: str, model_name: str | None, method: str,
-                        result: dict[str, Any] | None, fetched_at: Any | None = None) -> None:
+    def save_type_image(
+        self,
+        designator: str,
+        model_name: str | None,
+        method: str,
+        result: dict[str, Any] | None,
+        fetched_at: Any | None = None,
+    ) -> None:
         result = result or {}
         self._execute(
             """INSERT INTO aircraft_type_images (designator, model_name, status, method, title,
@@ -384,10 +433,18 @@ class PostgresStorage:
                description=EXCLUDED.description, article_url=EXCLUDED.article_url,
                image_url=EXCLUDED.image_url, file_url=EXCLUDED.file_url,
                fetched_at=EXCLUDED.fetched_at""",
-            (designator, model_name, "found" if result else "not_found", method,
-             result.get("title"), result.get("description"), result.get("article_url"),
-             result.get("image_url"), result.get("file_url"),
-             _iso_datetime(fetched_at or datetime.now(timezone.utc))),
+            (
+                designator,
+                model_name,
+                "found" if result else "not_found",
+                method,
+                result.get("title"),
+                result.get("description"),
+                result.get("article_url"),
+                result.get("image_url"),
+                result.get("file_url"),
+                _iso_datetime(fetched_at or datetime.now(UTC)),
+            ),
         )
 
     @staticmethod
@@ -395,10 +452,16 @@ class PostgresStorage:
         fields = row.get("fields") or {}
         typed = [_field_value(fields, name) for name in _SNAPSHOT_FIELDS]
         return (
-            _utc(row["bucket_start"]), row["receiver_id"], row["address_type"],
-            row["address"], int(row["frequency_hz"]),
-            _utc(row["first_received_at"]), _utc(row["last_received_at"]),
-            int(row["message_count"]), *typed, json.dumps(fields, separators=(",", ":")),
+            _utc(row["bucket_start"]),
+            row["receiver_id"],
+            row["address_type"],
+            row["address"],
+            int(row["frequency_hz"]),
+            _utc(row["first_received_at"]),
+            _utc(row["last_received_at"]),
+            int(row["message_count"]),
+            *typed,
+            json.dumps(fields, separators=(",", ":")),
         )
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:

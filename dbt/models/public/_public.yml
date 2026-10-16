@@ -528,7 +528,7 @@ models:
   - name: status
     description: '{{ doc(''col_status'') }}'
   - name: model
-    description: '{{ doc(''col_model'') }}'
+    description: '{{ doc(''col_notable_editions__model'') }}'
   - name: edition
     description: '{{ doc(''col_edition'') }}'
   - name: photos

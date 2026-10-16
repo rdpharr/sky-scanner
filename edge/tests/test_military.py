@@ -1,22 +1,25 @@
 import hashlib
 import unittest
 import urllib.error
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 from sky_scanner import military
 
-
 # --- parse_plane_alert_mil ---------------------------------------------------
 
 PLANE_ALERT_HEADER = "$ICAO,Registration,Operator,Type,$ICAO Type,Category,Tag 1,$#Tag 2,Tag 3"
-PLANE_ALERT_CSV = "\n".join([
-    PLANE_ALERT_HEADER,
-    "AE1001,N100AF,US Air Force,C-17,C17,Military,Cargo,USAF,",
-    "ae1002,????,US Navy,P-8,P8,Military,,Patrol,",
-    "invalidx,N999,Bad Row,Bad,BAD,Bad,,,",
-    "AE1001,DUPLICATE,Duplicate Row,X,X,X,,,",
-]) + "\n"
+PLANE_ALERT_CSV = (
+    "\n".join(
+        [
+            PLANE_ALERT_HEADER,
+            "AE1001,N100AF,US Air Force,C-17,C17,Military,Cargo,USAF,",
+            "ae1002,????,US Navy,P-8,P8,Military,,Patrol,",
+            "invalidx,N999,Bad Row,Bad,BAD,Bad,,,",
+            "AE1001,DUPLICATE,Duplicate Row,X,X,X,,,",
+        ]
+    )
+    + "\n"
+)
 
 
 class ParsePlaneAlertMilTests(unittest.TestCase):
@@ -51,7 +54,7 @@ class ParsePlaneAlertMilTests(unittest.TestCase):
         self.assertIsNone(record["registration"])
 
     def test_missing_icao_column_raises(self):
-        data = "Registration,Type\nN1,C17\n".encode()
+        data = b"Registration,Type\nN1,C17\n"
         with self.assertRaisesRegex(ValueError, "ICAO"):
             military.parse_plane_alert_mil(data)
 
@@ -91,7 +94,7 @@ class ParseMilitaryOperatorsTests(unittest.TestCase):
         self.assertEqual(len(result), 3)
 
     def test_missing_columns_raises(self):
-        data = "Code,ICAO,IATA\n1,AMC,\n".encode()
+        data = b"Code,ICAO,IATA\n1,AMC,\n"
         with self.assertRaisesRegex(ValueError, "ICAO/Name"):
             military.parse_military_operators(data)
 
@@ -102,6 +105,7 @@ class ParseMilitaryOperatorsTests(unittest.TestCase):
 
 
 # --- callword -----------------------------------------------------------------
+
 
 class CallwordTests(unittest.TestCase):
     def test_talon95_gives_talon(self):
@@ -129,6 +133,7 @@ class CallwordTests(unittest.TestCase):
 
 # --- us_callsign_service --------------------------------------------------
 
+
 class UsCallsignServiceTests(unittest.TestCase):
     def test_coast_guard_on_us_military_address(self):
         self.assertEqual(
@@ -147,6 +152,7 @@ class UsCallsignServiceTests(unittest.TestCase):
 
 
 # --- parse_wwi_family / fetch_wwi_family --------------------------------------
+
 
 def _wwi_page(title="TALON · Intel Codex"):
     lines = [
@@ -199,8 +205,10 @@ class ParseWwiFamilyTests(unittest.TestCase):
         self.assertEqual(result["last_seen"], "2026-09-28")
 
     def test_404_title_returns_none(self):
-        page = "<html><head><title>404: This page could not be found.</title></head>" \
-               "<body><main>nothing here</main></body></html>"
+        page = (
+            "<html><head><title>404: This page could not be found.</title></head>"
+            "<body><main>nothing here</main></body></html>"
+        )
         self.assertIsNone(military.parse_wwi_family(page, "GHOST"))
 
     def test_missing_word_raises(self):

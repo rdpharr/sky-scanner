@@ -1,8 +1,14 @@
-# Sky Scanner
+# Sky Scanner edge
 
-A receive-only HackRF collector that alternates 1090 MHz and 978 MHz every 30
-seconds, stores 15-second decoded aircraft snapshots in PostgreSQL/PostGIS, and
-enriches them from the free FAA registry. The first release is for SQL exploration.
+The part of Sky Scanner that runs at home: a receive-only HackRF collector
+that alternates between 1090 MHz and 978 MHz, stores 15-second decoded
+aircraft snapshots in PostgreSQL/PostGIS, enriches them from free registries,
+and replicates them to BigQuery. Everything downstream (dbt, the website, the
+MCP server and the weekly agent) is described in the [top-level README](../README.md).
+
+Hardware: a HackRF One r9 (firmware v2.2.0) in USB SDR mode, in a PortaPack,
+with an SRH789 antenna fully shortened, indoors at a window in northwest Las
+Vegas.
 
 ## Run
 
@@ -26,6 +32,39 @@ services use `restart: unless-stopped`. Stop them with `docker compose stop`;
 resume with `docker compose up -d`. A manually stopped service stays stopped
 after reboot. Sleep and shutdown interrupt reception. The PortaPack must also
 return to HackRF mode after power loss; verify this on your particular device.
+
+Services: `receiver` (owns the radio and the decoders), `ingest` (builds
+snapshots and writes them), `db`, `enrichment` (registries, military
+identification, type photos) and `replicator` (BigQuery). Enrichment and
+replication failures never stop collection.
+
+## Reception and snapshots
+
+- **Schedule.** One process owns the HackRF and alternates turns: 50 s on
+  1090 MHz and 10 s on 978 MHz (`DWELL_1090_SECONDS`, `DWELL_978_SECONDS`).
+  It was 30 s each until 2026-09-29; 978 traffic here is rare. Each turn is
+  recorded in `capture_intervals`, so every gap (the other band, retuning,
+  decoder teardown) is known. 1090 has blind periods of about 14 s, 978 about
+  50 s.
+- **Decoders.** readsb (pinned, patched to emit each message's decoded fields
+  as JSON) on 1090 MHz at 2.4 Msps, and dump978-fa through SoapySDR on 978 MHz
+  at about 2.083 Msps. `decoder/patch_readsb.py` refuses changed source
+  anchors. Upstream: [readsb](https://github.com/wiedehopf/readsb) (GPL-3.0)
+  and [dump978](https://github.com/flightaware/dump978) (BSD-2-Clause); their
+  notices stay in the build sources.
+- **Snapshots.** UTC-aligned, half-open 15-second buckets. At most one row per
+  receiver, address type and address, frequency and bucket, written only when
+  a valid report arrived for it. Typed columns hold common values with their
+  units; the `fields` JSONB keeps every decoded field with its original
+  reception `timestamp` and `source`. Values carry forward for up to 60 s and
+  their timestamps never advance unless received again. The frequency is the
+  receiver's tuning frequency, not a guess at the transmitter's band.
+- **Identity.** Identities are scoped by address type as well as address;
+  anonymous UAT and non-ICAO addresses are never assumed to be registered
+  aircraft, and no cross-band match is inferred from a callsign alone.
+  Aircraft without a position or a registry match remain queryable.
+- **What is not kept.** No raw I/Q or raw message archive. Snapshots discard
+  intermediate changes inside a bucket.
 
 ## Explore the database
 
@@ -51,167 +90,129 @@ FROM enriched_snapshots_current
 ORDER BY bucket_start DESC LIMIT 20;
 ```
 
-FAA metadata is versioned on change: a daily refresh writes rows only for new
-or changed aircraft, plus a `registry_status = 'absent'` version when an
-aircraft leaves the registry. Unchanged refreshes add no metadata rows.
-The worker also imports the newest monthly [OpenSky aircraft database](https://opensky-network.org/data/aircraft)
-snapshot. It adds international and military addresses the FAA registry lacks.
-OpenSky data is crowdsourced, unlicensed and provided "as is", and is sometimes
-stale. It is stored as a separate source (`source_name = 'opensky'`) and exposed
-only in `opensky_*` view columns (registration, model, type code, operator,
-owner, country). It never replaces FAA values. A snapshot URL that was already
-imported is skipped without downloading. Set `OPENSKY_ENABLED=0` to disable it.
-`enriched_snapshots` joins metadata available as of each observation;
-`enriched_snapshots_current` explicitly joins the latest imported metadata.
-`latest_aircraft` contains the most recent observation per identity/band, even
-if it is old: filter by `last_received_at` to find recently heard aircraft.
-More examples are in [sql/explore.sql](sql/explore.sql).
+`enriched_snapshots` joins the metadata available as of each observation;
+`enriched_snapshots_current` joins the latest imported metadata.
+`latest_aircraft` holds the most recent observation per identity and band,
+even if it is old: filter by `last_received_at` for recently heard aircraft.
 
-Each `fields` JSONB entry contains `value`, its original reception `timestamp`
-(Unix seconds), and `source`. A snapshot can carry fields for up to 60 seconds;
-their timestamps never advance unless received again. Null typed columns mean
-the value was unknown or expired. Different frequency observations remain
-separate. Rebroadcast reception frequency is not the original transmitter band.
+## Enrichment
 
-## Community aircraft database (tar1090-db)
+**FAA registry.** Downloaded daily and deduplicated by SHA-256. Metadata is
+versioned on change: a refresh writes rows only for new or changed aircraft,
+plus a `registry_status = 'absent'` version when an aircraft leaves the
+registry. The registered owner is never treated as the operator.
 
-Every 30 minutes the enrichment worker looks up newly observed aircraft in
+**OpenSky.** The newest monthly [OpenSky aircraft database](https://opensky-network.org/data/aircraft)
+snapshot adds international and military addresses the FAA registry lacks.
+It is crowdsourced, provided "as is" and sometimes stale, so it is stored as a
+separate source (`source_name = 'opensky'`) and never replaces FAA values.
+A snapshot already imported is skipped. `OPENSKY_ENABLED=0` disables it.
+
+**tar1090-db.** Every 30 minutes, newly observed aircraft are looked up in
 [tar1090-db](https://github.com/wiedehopf/tar1090-db), the community database
-(derived from Mictronics) behind readsb/tar1090. It is downloaded daily. Only
-aircraft actually observed are stored, as the `tar1090_db` source (partial,
-change-only imports), with its flags (military, PIA, LADD) as tags. Rows
-marked "miscode" identify transponders broadcasting invalid addresses. The
-repository states no license: the data stays in this private database and is
-never committed. Identity precedence is FAA, then tar1090-db, then OpenSky,
-then the plane-alert-db military list. Set `TAR1090_DB_ENABLED=0` to disable
-it.
+behind readsb/tar1090, downloaded daily. Only aircraft actually observed are
+stored, as the `tar1090_db` source, with its flags (military, PIA, LADD) as
+tags; "miscode" rows mark transponders broadcasting invalid addresses.
+Identity precedence is FAA, then tar1090-db, then OpenSky, then
+plane-alert-db. `TAR1090_DB_ENABLED=0` disables it.
 
-The aircraft log hides "unconfirmed" addresses by default. These were heard in
-only one message and never again, and are usually decoding errors rather than
-real aircraft. Choose "Show unconfirmed" to include them.
-
-## Military aircraft identification
-
-The enrichment worker identifies military aircraft and decodes only those.
-Detection runs locally against every aircraft, with no per-aircraft network
-calls. An aircraft counts as military when any of these holds:
+**Military identification.** Detection runs locally against every aircraft,
+with no per-aircraft network calls. An aircraft counts as military when any
+of these holds:
 
 - its ICAO address is in the US military block (AE0000–AFFFFF);
 - tar1090-db flags it as military;
 - it is on the [plane-alert-db](https://github.com/sdr-enthusiasts/plane-alert-db)
-  military list (ODbL, refreshed daily), which gives operator, type, serial
-  and tags;
-- its callsign starts with a military ICAO operator code (for example RCH →
+  military list (ODbL, refreshed daily);
+- its callsign starts with a military ICAO operator code (for example RCH,
   Air Mobility Command), from [VRS standing data](https://github.com/vradarserver/standing-data)
   (CC0, refreshed daily);
-- it uses a US Coast Guard style callsign (C + tail number) from a
-  US-military address.
+- it uses a US Coast Guard style callsign from a US military address.
 
 For military aircraft only, tactical callwords (TALON95 → TALON) are looked
 up in the [War Watch Intel](https://www.warwatchintel.com/codex) callsign
-codex. Lookups run every 15 minutes, at most 10 per cycle, 5 s apart, and
-are cached: 30 days when found, 7 days when not found. The result lists which
-aircraft types and countries recently used the callword, and whether this
-aircraft's type is among them. Callwords are shared across units, so this is
-supporting evidence, not a unit identification.
+codex: every 15 minutes, at most 10 per cycle, 5 s apart, cached 30 days when
+found and 7 when not. Callwords are shared across units, so a match is
+supporting evidence, not a unit identification. `MILITARY_ENABLED=0`
+disables it.
 
-Results appear in the aircraft log's Military filter and in a "Military
-identification" panel on each military aircraft's detail view. Set
-`MILITARY_ENABLED=0` to disable it. Reference data lives in the
-`plane_alert_mil` metadata source, `military_operator_codes` and
-`callword_lookups`.
+**Aircraft type photos.** Every 30 minutes the worker resolves up to 15
+aircraft types seen in the last 30 days (military first) to an English
+Wikipedia article: through Wikipedia's "List of aircraft type designators"
+first, otherwise by searching the model name. A search hit is kept only when
+the article describes an aircraft and its title names the same model.
+Results are cached in `aircraft_type_images` (30 days when found, 7 when
+not). Only freely licensed Wikimedia Commons images are used, and they are
+hotlinked, not stored. `TYPE_IMAGES_ENABLED=0` disables it.
 
-## Aircraft type photos
+## Replication to BigQuery
 
-Every 30 minutes the enrichment worker resolves up to 15 aircraft types seen
-in the last 30 days to an English Wikipedia article. It uses Wikipedia's
-"List of aircraft type designators" first, then a search on the model name,
-accepted only when the article describes an aircraft. Results are cached in
-`aircraft_type_images` (30 days when found, 7 days when not). Only freely
-licensed Wikimedia Commons images are used. The detail page hotlinks the
-image rather than storing a copy. Set `TYPE_IMAGES_ENABLED=0` to disable it.
+The `replicator` service copies the edge database into the BigQuery `raw`
+dataset with the `sky-edge` service account, whose key is mounted from
+`secrets/gcp-edge.json` and which can write nothing else. It connects as the
+read-only `explorer` role, so replication never writes to the edge database.
 
-## Aircraft log page (LAN)
+- Snapshots and capture intervals are polled every 30 s
+  (`REPLICATOR_INTERVAL_SECONDS`) and streamed in order of `written_at`, with
+  a short overlap so rows from late commits are not missed. Rows already sent
+  are skipped; duplicates that remain (for example after a restart) are
+  removed in dbt staging.
+- Reference tables are reloaded in full once a day with free load jobs.
+- The receiver's `location` never leaves home.
 
-The `web` service serves a read-only page at `http://<LAN IP>:8080` (port
-`WEB_PORT`, bound to `DB_BIND_ADDRESS`). It shows:
-
-- totals by aircraft class and ICAO type;
-- a sortable, filterable list of every aircraft, with first and last seen
-  dates in the browser's time zone;
-- a **Refresh** button that queries the database live;
-- a time-range filter (24 h, 7 days, 30 days, all time).
-
-Select any aircraft in the list to open its detail view
-(`#/aircraft/<type>/<address>`, which can be bookmarked). It shows:
-
-- FAA and OpenSky identity side by side, plus links to ADS-B Exchange,
-  FlightAware, OpenSky and the FAA record;
-- first and last seen, and every past sighting (a run of snapshots with no
-  gap over 10 minutes);
-- for a selected sighting, a track plot, an altitude/ground-speed profile and
-  every 15-second snapshot with all its decoded fields;
-- the latest decoded fields with their reception times;
-- the full registry version history;
-- a representative photo of the aircraft's type from its English Wikipedia
-  article, hotlinked from Wikimedia, with links to the article and the
-  photo's credit and license page. It shows the type, not that airframe.
-
-The page uses the read-only `explorer` role over TLS. The JSON endpoints are
-`/api/aircraft?days=N`, `/api/aircraft/<type>/<address>` and
-`/api/aircraft/<type>/<address>/snapshots?start=<iso>&end=<iso>` (at most
-two days per request). It has no login and uses plain HTTP, so keep
-it on the home network and never port-forward it. The first load fetches the
-ICAO Doc 8643 type list from OpenSky; without it, classes show as "Other".
-Aggregating all snapshots slows as data grows; use a shorter range if an
-all-time refresh becomes slow.
-
-Existing installs need the explorer rule for the Docker network in
-`pg_hba.conf` (fresh installs get it from `docker/init-db.sh`):
-`hostssl sky_scanner explorer 172.16.0.0/12 scram-sha-256`, followed by
-`SELECT pg_reload_conf();`.
-
-## Live demos and tests
+## Tests
 
 ```sh
-# This demo queries genuinely collected records; it does not inject fixtures.
-docker compose exec ingest python -m sky_scanner.demo
-
-# Offline/mocked regression suite; actual decoder fixture tests run in the image.
+# Offline regression suite (fixtures and mocks; decoder fixture tests run in the image).
 docker compose run --rm --no-deps ingest python -m unittest discover -s tests -v
 
-# Explicit free-registry refresh (regular worker already runs daily).
+# Explicit registry refresh (the worker already runs daily).
 docker compose run --rm --no-deps enrichment python -m sky_scanner.enrich_worker --once
 ```
 
-For a terminal-only live decoder demo, stop the receiver service first, then
+For a terminal-only live decoder check, stop the receiver service first, then
 run `docker compose run --rm --no-deps receiver python -m sky_scanner.receiver
---stdout --seconds 120`. Restart `docker compose up -d receiver` afterwards.
-Do not run two radio consumers together.
+--stdout --seconds 120`. Restart it with `docker compose up -d receiver`
+afterwards. Never run two radio consumers together.
+
+## What has been verified live
+
+- 1090 MHz: the full pipeline (decoder, ingest, Postgres, FAA enrichment)
+  from the first day, 2026-09-26, with per-field timestamps and
+  carry-forward checked in stored rows.
+- 978 MHz: the first UAT aircraft (a Piper PA-28 squawking VFR over northwest
+  Las Vegas) on 2026-09-26. UAT traffic here is sparse and no FIS-B
+  ground-station uplink has ever been decoded, so sensitivity on this band is
+  unknown and probably limited by the antenna and placement. Diagnostics at
+  several gains, through `hackrf_transfer`, and through an offset-tuned
+  8.333 Msps path also decoded no uplinks.
+- Recovery: the database container was force-recreated under live load; the
+  volume kept every row, ingest held results in its retry queue and resumed.
+- Access: `explorer` over TLS can read but not write; plain connections, wrong
+  passwords and the owner account from the LAN are all rejected.
+
+Still to verify: collection after a host reboot without login, USB
+unplug and replug, the PortaPack returning to HackRF mode after power loss,
+and sleep behaviour at the login screen.
 
 ## Operational limits
 
 - Band switching has deliberate blind periods and decoder startup overhead.
-- 978 MHz UAT reception is live-verified but sparse: one aircraft in the first
-  3 hours, and no ground-station uplinks decoded. See [STATUS.md](STATUS.md).
   dump978-fa stalls on SIGTERM, so 978 turns end with SIGKILL after 3 s.
-- The native decoder paths use 2.4 Msps (1090) and approximately 2.083333 Msps
-  (978). These are below HackRF's preferred 8 Msps minimum for filtering quality;
-  improved high-rate capture/resampling is a future RF optimization, not a claim
-  of current maximum sensitivity.
-- No raw I/Q or raw transponder archive is retained. Snapshots discard
-  intermediate changes inside each bucket.
-- Collection uses bounded memory queues. Long database/network outages or
-  power loss can lose observations. Events arriving more than
-  `INGEST_LATE_GRACE_SECONDS` (default 5) after their bucket ends are dropped
-  with a service log. Batches rejected by ingestion (HTTP 4xx) are dropped, not retried.
-- The FAA registry does not establish actual operator identity, flight route,
-  or withheld registration details. Operator remains null without another source.
-- Ordinary bounded container logs support troubleshooting. There is no storage
-  monitoring, alert system, or automated pruning. The only UI is the read-only
-  LAN aircraft log page.
-- The receiver container has USB bus access for reconnects, without privileged
-  mode. Database and application containers have no USB access.
+- Both decoders run below HackRF's preferred 8 Msps minimum for filtering
+  quality; high-rate capture with resampling is a possible RF improvement,
+  not a claim of current maximum sensitivity.
+- Collection uses bounded memory queues. Long database outages or power loss
+  can lose observations. Events arriving more than `INGEST_LATE_GRACE_SECONDS`
+  (default 5) after their bucket ends are dropped with a log line; batches
+  rejected by ingestion (HTTP 4xx) are dropped, not retried.
+- The FAA registry does not establish the operator, route or withheld
+  registration details.
+- The receiver container has USB bus access for reconnects, without
+  privileged mode. The database and application containers have no USB access.
+- Data freshness and pipeline failures are monitored in Google Cloud, which
+  emails the operator; the edge itself has no storage monitoring or
+  automated pruning.
 
 ## Backup and restore
 
@@ -220,24 +221,23 @@ mkdir -p data
 docker compose exec -T db pg_dump -U sky_scanner -d sky_scanner -Fc > data/backup.dump
 ```
 
-Keep backups separately from this computer. For a restore test, create a separate
-empty database, then use `pg_restore --no-owner -U sky_scanner -d RESTORE_DATABASE`.
-Never restore over the live database without an explicit recovery plan. Backups
-and collected data are ignored by Git. No automatic backup job is installed.
+Keep backups separately from this computer. For a restore test, create a
+separate empty database, then use `pg_restore --no-owner -U sky_scanner -d
+RESTORE_DATABASE`. Never restore over the live database without an explicit
+recovery plan. Backups and collected data are ignored by Git. No automatic
+backup job is installed.
 
-## Development and migration
+## Moving the receiver
 
-Application code is Python; decoder revisions are pinned in the Dockerfile.
-The readsb patch emits message-local decoded fields as JSON rather than polling
-cached aircraft state. `decoder/patch_readsb.py` refuses changed source anchors.
-Upstream projects: [readsb](https://github.com/wiedehopf/readsb) (GPL-3.0) and
-[dump978](https://github.com/flightaware/dump978) (BSD-2-Clause). Their notices stay
-in the build sources; retain corresponding source and patch if distributing binaries.
+For a future Raspberry Pi, build and validate ARM64 decoder images, run the
+receiver on the Pi, and point `INGEST_URL` at a secured remote ingestion
+endpoint. The current HTTP ingestion endpoint is meant only for the private
+Docker network; never publish it to a LAN or the internet. The database
+location is set by `DATABASE_URL`.
 
-For a future Pi, build/validate ARM64 decoder images, run the receiver on the
-Pi, and configure `INGEST_URL` to a secured remote ingestion endpoint. The current
-HTTP ingestion endpoint is intended only for the private Docker network; do not
-publish it directly to a LAN or internet. The DB location uses `DATABASE_URL`.
+## References
 
-The approved functional scope is in [SPEC.md](SPEC.md); current live-demo
-results and pending validation are in [STATUS.md](STATUS.md).
+- [HackRF One](https://hackrf.readthedocs.io/en/stable/hackrf_one.html) and
+  [sampling guidance](https://hackrf.readthedocs.io/en/latest/sampling_rate.html)
+- [FAA registry downloads](https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/releasable_aircraft_download)
+  and [field definitions](https://registry.faa.gov/database/ardata.pdf)

@@ -18,6 +18,7 @@ select
     t.image_file_url
 from {{ ref('dim_aircraft_type') }} as t
 inner join {{ ref('pub_aircraft') }} as a using (designator)
-group by t.designator, t.type_name, t.aircraft_class, t.doc8643_description, t.wake_category,
-         t.engine_type, t.engine_count, t.wikipedia_article_url, t.wikipedia_title,
-         t.wikipedia_description, t.image_url, t.image_file_url
+group by
+    t.designator, t.type_name, t.aircraft_class, t.doc8643_description, t.wake_category,
+    t.engine_type, t.engine_count, t.wikipedia_article_url, t.wikipedia_title,
+    t.wikipedia_description, t.image_url, t.image_file_url

@@ -5,8 +5,9 @@ id) and ends with a small outline saying which calls support each part of
 the report. Write: each entry, section intro and the front matter is
 written in parallel from only the tool results it needs, citing call ids as
 evidence. Small parts keep every model output short, so nothing is cut off
-at the output limit, and a failed part loses one entry, not a section. The trace keeps each call's arguments and result for
-the verifier and for publication.
+at the output limit, and a failed part loses one entry, not a section. The
+trace keeps each call's arguments and result for the verifier and for
+publication.
 """
 
 from __future__ import annotations
@@ -29,8 +30,10 @@ PROMPTS = Path(__file__).parent / "prompts"
 MAX_TURNS = 30
 MAX_TOOL_CALLS = 50
 MAX_RESULT_CHARS = 12_000
-SYSTEM = ("You are a careful data journalist. You use tools to investigate and you cite every fact. "
-          "You never state anything the tools did not return.")
+SYSTEM = (
+    "You are a careful data journalist. You use tools to investigate and you cite every fact. "
+    "You never state anything the tools did not return."
+)
 
 
 @dataclass
@@ -71,7 +74,7 @@ def parse_json(text: str) -> dict[str, Any]:
     if fenced:
         text = fenced.group(1)
     start, end = text.find("{"), text.rfind("}")
-    return json.loads(text[start:end + 1])
+    return json.loads(text[start : end + 1])
 
 
 def json_reply(run: Run, messages: list[dict], required: str, attempts: int = 2) -> dict[str, Any]:
@@ -88,9 +91,10 @@ def json_reply(run: Run, messages: list[dict], required: str, attempts: int = 2)
                 return data
         except (ValueError, json.JSONDecodeError):
             pass
-        messages = messages + [{"role": "assistant", "content": text[:20000]},
-                               {"role": "user", "content": f"That was not valid JSON with a \"{required}\" "
-                                                           "key. Reply with only the JSON."}]
+        messages = messages + [
+            {"role": "assistant", "content": text[:20000]},
+            {"role": "user", "content": f'That was not valid JSON with a "{required}" key. Reply with only the JSON.'},
+        ]
     raise RuntimeError(f"model gave no valid JSON with {required!r} (finish_reason={finish})")
 
 
@@ -105,8 +109,7 @@ async def _call(client: Client, run: Run, tc: dict[str, Any]) -> dict[str, Any]:
         ok, result = await mcp_bridge.call(client, name, arguments)
     except Exception as exc:  # a bad call is reported to the model, not fatal
         ok, result = False, str(exc)
-    entry.update(tool=name, arguments=arguments, ok=ok, result=result,
-                 seconds=round(time.monotonic() - t0, 2))
+    entry.update(tool=name, arguments=arguments, ok=ok, result=result, seconds=round(time.monotonic() - t0, 2))
     content = json.dumps({"call_id": call_id, "ok": ok, "result": result}, default=str)
     if len(content) > MAX_RESULT_CHARS:
         content = content[:MAX_RESULT_CHARS] + "... [truncated: narrow the request]"
@@ -116,13 +119,16 @@ async def _call(client: Client, run: Run, tc: dict[str, Any]) -> dict[str, Any]:
 async def investigate(client: Client, run: Run, task: str) -> dict[str, Any]:
     """Let the model call tools; returns its outline."""
     tools = mcp_bridge.openai_tools((await client.list_tools()).tools)
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM},
-                                      {"role": "user", "content": task}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}]
     while True:
         run.turns += 1
         if len(run.trace) >= MAX_TOOL_CALLS or run.turns >= MAX_TURNS:
-            messages.append({"role": "user", "content": "Stop investigating. Reply with the outline JSON now, "
-                                                        "citing only calls you have made."})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Stop investigating. Reply with the outline JSON now, citing only calls you have made.",
+                }
+            )
             return json_reply(run, messages, "sections")
         response = openrouter.complete(run.model, messages, tools, max_tokens=16000)
         run.add_usage(response)
@@ -150,8 +156,10 @@ def _results(run: Run, call_ids: list[str]) -> str:
 
 
 def _write(run: Run, system: str, request: str, call_ids: list[str], required: str) -> dict[str, Any]:
-    messages = [{"role": "system", "content": system},
-                {"role": "user", "content": f"{request}\n\nTool results by call_id:\n{_results(run, call_ids)}"}]
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"{request}\n\nTool results by call_id:\n{_results(run, call_ids)}"},
+    ]
     return json_reply(run, messages, required)
 
 
@@ -170,26 +178,36 @@ async def write_edition(mcp_url: str, model: str, start: date, end: date) -> tup
             return await asyncio.to_thread(fn, *args)
 
     def entry(e: dict[str, Any]) -> dict[str, Any]:
-        request = ("Write this entry. Reply with {\"title\": ..., \"addresses\": [...], \"designator\": ..., "
-                   "\"what_it_is\": statement, \"details\": [statement, ...]} (1 to 4 details).\n\nEntry outline:\n"
-                   + json.dumps(e))
+        request = (
+            'Write this entry. Reply with {"title": ..., "addresses": [...], "designator": ..., '
+            '"what_it_is": statement, "details": [statement, ...]} (1 to 4 details).\n\nEntry outline:\n'
+            + json.dumps(e)
+        )
         return _write(run, system, request, list(e.get("calls", [])), "details")
 
     def intro(s: dict[str, Any]) -> dict[str, Any]:
-        request = ("Write this section's heading and a short introduction (1 to 3 statements). Reply with "
-                   "{\"heading\": ..., \"intro\": [statement, ...]}.\n\nSection outline:\n"
-                   + json.dumps({k: v for k, v in s.items() if k != "entries"}))
+        request = (
+            "Write this section's heading and a short introduction (1 to 3 statements). Reply with "
+            '{"heading": ..., "intro": [statement, ...]}.\n\nSection outline:\n'
+            + json.dumps({k: v for k, v in s.items() if k != "entries"})
+        )
         return _write(run, system, request, list(s.get("intro_calls", [])), "intro")
 
     def front_matter() -> dict[str, Any]:
-        calls = (list(outline.get("summary_calls", [])) + list(outline.get("privacy_calls", []))
-                 + list(outline.get("caveats_calls", [])))
-        request = ("Write the report's title, subtitle, summary (2 to 4 statements: lead with the week's most "
-                   "distinctive story, then totals), privacy (LADD and PIA counts) and caveats. Reply with "
-                   "{\"title\": ..., \"subtitle\": ..., \"summary\": [statement, ...], \"privacy\": [...], "
-                   "\"caveats\": [...]}. Section headings, for context: "
-                   + json.dumps([s.get("heading") for s in outline.get("sections", [])])
-                   + "\nCaveat notes from the investigation: " + json.dumps(outline.get("caveats", [])))
+        calls = (
+            list(outline.get("summary_calls", []))
+            + list(outline.get("privacy_calls", []))
+            + list(outline.get("caveats_calls", []))
+        )
+        request = (
+            "Write the report's title, subtitle, summary (2 to 4 statements: lead with the week's most "
+            "distinctive story, then totals), privacy (LADD and PIA counts) and caveats. Reply with "
+            '{"title": ..., "subtitle": ..., "summary": [statement, ...], "privacy": [...], '
+            '"caveats": [...]}. Section headings, for context: '
+            + json.dumps([s.get("heading") for s in outline.get("sections", [])])
+            + "\nCaveat notes from the investigation: "
+            + json.dumps(outline.get("caveats", []))
+        )
         return _write(run, system, request, calls, "summary")
 
     # One request per entry and per section intro: every output stays small,
@@ -198,9 +216,14 @@ async def write_edition(mcp_url: str, model: str, start: date, end: date) -> tup
     front, intros, entries = await asyncio.gather(
         bounded(front_matter),
         asyncio.gather(*(bounded(intro, s) for s in sections), return_exceptions=True),
-        asyncio.gather(*(asyncio.gather(*(bounded(entry, e) for e in s.get("entries", [])),
-                                        return_exceptions=True) for s in sections)),
-        return_exceptions=True)
+        asyncio.gather(
+            *(
+                asyncio.gather(*(bounded(entry, e) for e in s.get("entries", [])), return_exceptions=True)
+                for s in sections
+            )
+        ),
+        return_exceptions=True,
+    )
     if isinstance(front, Exception):
         raise front
     failed = []
@@ -215,8 +238,9 @@ async def write_edition(mcp_url: str, model: str, start: date, end: date) -> tup
                 failed.append(f"{s.get('heading')} / {e.get('title')}: {result}")
             else:
                 kept.append(result)
-        draft_sections.append({"heading": head.get("heading") or s.get("heading"),
-                               "intro": head.get("intro", []), "entries": kept})
+        draft_sections.append(
+            {"heading": head.get("heading") or s.get("heading"), "intro": head.get("intro", []), "entries": kept}
+        )
     draft = {**front, "sections": draft_sections}
     run.final_text = json.dumps({"failed_parts": failed}) if failed else ""
     run.seconds = time.monotonic() - started

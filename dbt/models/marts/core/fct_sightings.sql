@@ -4,9 +4,11 @@
 with snapshots as (
     select
         *,
-        if(lag(bucket_start) over w is null
-           or timestamp_diff(bucket_start, lag(bucket_start) over w, second)
-              > {{ var('sighting_gap_minutes') }} * 60, 1, 0) as starts_sighting
+        if(
+            lag(bucket_start) over w is null
+            or timestamp_diff(bucket_start, lag(bucket_start) over w, second)
+            > {{ var('sighting_gap_minutes') }} * 60, 1, 0
+        ) as starts_sighting
     from {{ ref('fct_snapshots') }}
     window w as (partition by address_type, address order by bucket_start, frequency_hz)
 ),
@@ -16,19 +18,28 @@ numbered as (
         *,
         sum(starts_sighting) over (
             partition by address_type, address order by bucket_start, frequency_hz
-            rows between unbounded preceding and current row) as sighting_number
+            rows between unbounded preceding and current row
+        ) as sighting_number
     from snapshots
 ),
 
 positioned as (
     select
-        n.address_type, n.address, n.sighting_number, n.bucket_start, n.position,
-        n.altitude_baro_ft, n.on_ground, n.track_deg,
+        n.address_type,
+        n.address,
+        n.sighting_number,
+        n.bucket_start,
+        n.position,
+        n.altitude_baro_ft,
+        n.on_ground,
+        n.track_deg,
         st_distance(n.position, lag(n.position) over p) / 1852 as segment_nm,
         timestamp_diff(n.bucket_start, lag(n.bucket_start) over p, second) as segment_seconds,
         lag(n.track_deg) over p as previous_track_deg,
-        (select min(st_distance(n.position, st_geogpoint(a.longitude, a.latitude))) / 1852
-         from {{ ref('local_airports') }} as a) as nearest_airport_nm
+        (
+            select min(st_distance(n.position, st_geogpoint(a.longitude, a.latitude))) / 1852
+            from {{ ref('local_airports') }} as a
+        ) as nearest_airport_nm
     from numbered as n
     where n.position is not null
     window p as (partition by n.address_type, n.address, n.sighting_number order by n.bucket_start)
@@ -47,11 +58,15 @@ paths as (
             array_agg(position order by bucket_start desc limit 1)[offset(0)]) / 1852
             as displacement_nm,
         -- Heading change between snapshots at most a minute apart.
-        sum(if(segment_seconds <= 60 and track_deg is not null and previous_track_deg is not null,
-               abs(mod(cast(track_deg - previous_track_deg + 540 as numeric), 360) - 180), 0))
+        sum(if(
+            segment_seconds <= 60 and track_deg is not null and previous_track_deg is not null,
+            abs(mod(cast(track_deg - previous_track_deg + 540 as numeric), 360) - 180), 0
+        ))
             as total_turn_deg,
-        countif(altitude_baro_ft < 4500 and not coalesce(on_ground, false)
-                and nearest_airport_nm > 5) as low_away_from_airport_snapshots,
+        countif(
+            altitude_baro_ft < 4500 and not coalesce(on_ground, false)
+            and nearest_airport_nm > 5
+        ) as low_away_from_airport_snapshots,
         min(nearest_airport_nm) as closest_airport_nm
     from positioned
     group by address_type, address, sighting_number

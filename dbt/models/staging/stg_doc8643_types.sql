@@ -1,3 +1,5 @@
+-- noqa: disable=CP02
+-- Doc 8643 column names are CamelCase in the source CSV.
 -- The file lists one row per manufacturer name, so a designator can repeat.
 -- Keep the first row in file order, as the aircraft log does.
 select
@@ -12,4 +14,5 @@ select
 from {{ source('raw', 'doc8643_types') }}
 where trim(Designator) != ''
 qualify row_number() over (
-    partition by trim(Designator) order by _row_number) = 1
+    partition by trim(Designator) order by _row_number
+) = 1

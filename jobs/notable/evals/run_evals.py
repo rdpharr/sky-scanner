@@ -26,7 +26,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,13 +43,24 @@ PROJECT = os.environ.get("GCP_PROJECT", "sky-scanner-pharr")
 MCP_URL = os.environ.get("MCP_URL", "https://mcp.skyscanner.pharrhomelab.com/mcp")
 MAX_CALLS_PER_QUESTION = 12
 CONCURRENCY = 4
-RUN_SCHEMA = [("run_id", "STRING"), ("kind", "STRING"), ("model", "STRING"), ("started_at", "TIMESTAMP"),
-              ("score", "FLOAT64"), ("passed", "INT64"), ("total", "INT64"), ("cost_usd", "FLOAT64"),
-              ("seconds", "FLOAT64"), ("details", "JSON")]
+RUN_SCHEMA = [
+    ("run_id", "STRING"),
+    ("kind", "STRING"),
+    ("model", "STRING"),
+    ("started_at", "TIMESTAMP"),
+    ("score", "FLOAT64"),
+    ("passed", "INT64"),
+    ("total", "INT64"),
+    ("cost_usd", "FLOAT64"),
+    ("seconds", "FLOAT64"),
+    ("details", "JSON"),
+]
 
-QA_SYSTEM = ("You answer questions about aircraft data using only the tools. Call tools to find the answer, "
-             "then reply with only JSON: {\"answer\": <number or short text>, \"how\": \"one sentence on which "
-             "tool and field gave it\"}. Give numbers as plain numbers without units.")
+QA_SYSTEM = (
+    "You answer questions about aircraft data using only the tools. Call tools to find the answer, "
+    'then reply with only JSON: {"answer": <number or short text>, "how": "one sentence on which '
+    'tool and field gave it"}. Give numbers as plain numbers without units.'
+)
 
 
 def bq() -> bigquery.Client:
@@ -78,14 +89,17 @@ async def ask(model: str, question: dict[str, Any], gold: Any, semaphore: asynci
         try:
             async with Client(MCP_URL) as client:
                 tools = mcp_bridge.openai_tools((await client.list_tools()).tools)
-                messages: list[dict] = [{"role": "system", "content": QA_SYSTEM},
-                                        {"role": "user", "content": question["q"]}]
+                messages: list[dict] = [
+                    {"role": "system", "content": QA_SYSTEM},
+                    {"role": "user", "content": question["q"]},
+                ]
                 while True:
                     final = len(run.trace) >= MAX_CALLS_PER_QUESTION
                     if final:
                         messages.append({"role": "user", "content": "Answer now with the JSON."})
-                    response = await asyncio.to_thread(openrouter.complete, model, messages,
-                                                       None if final else tools, max_tokens=8000)
+                    response = await asyncio.to_thread(
+                        openrouter.complete, model, messages, None if final else tools, max_tokens=8000
+                    )
                     run.add_usage(response)
                     message = response["choices"][0]["message"]
                     calls = message.get("tool_calls") or []
@@ -97,9 +111,17 @@ async def ask(model: str, question: dict[str, Any], gold: Any, semaphore: asynci
         except Exception as exc:  # a failed question scores zero, it does not stop the eval
             error = str(exc)[:300]
         passed = grade(question["kind"], answer, gold, question.get("tolerance", 0.0))
-        return {"id": question["id"], "question": question["q"], "answer": answer, "gold": gold,
-                "passed": passed, "error": error, "tool_calls": [t.get("tool") for t in run.trace],
-                "cost_usd": round(run.cost_usd, 5), "seconds": round(time.monotonic() - started, 1)}
+        return {
+            "id": question["id"],
+            "question": question["q"],
+            "answer": answer,
+            "gold": gold,
+            "passed": passed,
+            "error": error,
+            "tool_calls": [t.get("tool") for t in run.trace],
+            "cost_usd": round(run.cost_usd, 5),
+            "seconds": round(time.monotonic() - started, 1),
+        }
 
 
 async def qa(model: str) -> dict[str, Any]:
@@ -111,23 +133,40 @@ async def qa(model: str) -> dict[str, Any]:
     started = time.monotonic()
     results = await asyncio.gather(*(ask(model, q, golds[q["id"]], semaphore) for q in spec["questions"]))
     passed = sum(r["passed"] for r in results)
-    return {"kind": "qa", "model": model, "score": round(passed / len(results), 3), "passed": passed,
-            "total": len(results), "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
-            "seconds": round(time.monotonic() - started, 1), "details": results}
+    return {
+        "kind": "qa",
+        "model": model,
+        "score": round(passed / len(results), 3),
+        "passed": passed,
+        "total": len(results),
+        "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
+        "seconds": round(time.monotonic() - started, 1),
+        "details": results,
+    }
 
 
 def recall(edition_id: str | None) -> dict[str, Any]:
     spec = json.loads((HERE / "golden_week.json").read_text())
     client = bq()
     where = "edition_id = @id" if edition_id else "week_end = @week and purpose = 'eval'"
-    row = list(client.query(
-        f"select edition_id, model, to_json_string(edition) e, cost_usd from `{PROJECT}.ai.notable_editions` "
-        f"where {where} order by generated_at desc limit 1",
-        job_config=bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("id", "STRING", edition_id or ""),
-            bigquery.ScalarQueryParameter("week", "DATE", spec["week_ending"])])).result())[0]
-    regs = {r.registration.upper(): r.address for r in client.query(
-        f"select registration, address from `{PROJECT}.public.pub_aircraft` where registration is not null").result()}
+    row = list(
+        client.query(
+            f"select edition_id, model, to_json_string(edition) e, cost_usd from `{PROJECT}.ai.notable_editions` "
+            f"where {where} order by generated_at desc limit 1",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("id", "STRING", edition_id or ""),
+                    bigquery.ScalarQueryParameter("week", "DATE", spec["week_ending"]),
+                ]
+            ),
+        ).result()
+    )[0]
+    regs = {
+        r.registration.upper(): r.address
+        for r in client.query(
+            f"select registration, address from `{PROJECT}.public.pub_aircraft` where registration is not null"
+        ).result()
+    }
     blob = row.e.upper()
     details = []
     for item in spec["items"]:
@@ -135,16 +174,25 @@ def recall(edition_id: str | None) -> dict[str, Any]:
         found = any(k in blob or (k in regs and regs[k] in blob) for k in keys)
         details.append({"item": item["item"], "found": found})
     passed = sum(d["found"] for d in details)
-    return {"kind": "edition_recall", "model": row.model, "score": round(passed / len(details), 3),
-            "passed": passed, "total": len(details), "cost_usd": row.cost_usd, "seconds": None,
-            "details": {"edition_id": row.edition_id, "items": details}}
+    return {
+        "kind": "edition_recall",
+        "model": row.model,
+        "score": round(passed / len(details), 3),
+        "passed": passed,
+        "total": len(details),
+        "cost_usd": row.cost_usd,
+        "seconds": None,
+        "details": {"edition_id": row.edition_id, "items": details},
+    }
 
 
 def save(result: dict[str, Any]) -> None:
-    row = {"run_id": str(uuid.uuid4()), "started_at": datetime.now(timezone.utc).isoformat(), **result}
-    config = bigquery.LoadJobConfig(source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                                    schema=[bigquery.SchemaField(n, t) for n, t in RUN_SCHEMA],
-                                    write_disposition="WRITE_APPEND")
+    row = {"run_id": str(uuid.uuid4()), "started_at": datetime.now(UTC).isoformat(), **result}
+    config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        schema=[bigquery.SchemaField(n, t) for n, t in RUN_SCHEMA],
+        write_disposition="WRITE_APPEND",
+    )
     with tempfile.TemporaryFile() as f:
         f.write(json.dumps({n: row.get(n) for n, _ in RUN_SCHEMA}, default=str).encode() + b"\n")
         f.seek(0)
@@ -157,8 +205,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--model", action="append")
     parser.add_argument("--edition-id")
     args = parser.parse_args(argv[1:])
-    results = ([asyncio.run(qa(m)) for m in (args.model or ["xiaomi/mimo-v2.6-pro"])]
-               if args.kind == "qa" else [recall(args.edition_id)])
+    results = (
+        [asyncio.run(qa(m)) for m in (args.model or ["xiaomi/mimo-v2.6-pro"])]
+        if args.kind == "qa"
+        else [recall(args.edition_id)]
+    )
     for result in results:
         save(result)
         summary = {k: result[k] for k in ("kind", "model", "score", "passed", "total", "cost_usd", "seconds")}

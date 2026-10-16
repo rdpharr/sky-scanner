@@ -17,7 +17,7 @@ import hashlib
 import io
 import re
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 SOURCE_NAME = "tar1090_db"
@@ -63,10 +63,11 @@ def parse(data: bytes) -> tuple[str, dict[str, tuple]]:
     return digest, table
 
 
-def records(table: dict[str, tuple], addresses, *, dataset_hash: str,
-            retrieved_at: datetime | None = None) -> list[dict[str, Any]]:
+def records(
+    table: dict[str, tuple], addresses, *, dataset_hash: str, retrieved_at: datetime | None = None
+) -> list[dict[str, Any]]:
     """Metadata records for the observed ``addresses`` found in the table."""
-    retrieved = (retrieved_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    retrieved = (retrieved_at or datetime.now(UTC)).astimezone(UTC)
     result = []
     for address in sorted({a.upper() for a in addresses}):
         entry = table.get(address)
@@ -77,12 +78,18 @@ def records(table: dict[str, tuple], addresses, *, dataset_hash: str,
         # any column and their flags are meaningless.
         miscode = any((v or "").lower().startswith("miscode") for v in entry)
         tags = ["miscode"] if miscode else flag_names(flags)
-        result.append({
-            "address_type": "icao", "icao_address": address,
-            "registration": registration, "icao_type_code": icao_type,
-            "model": description, "registered_owner": owner_operator,
-            "tags": ", ".join(tags) or None,
-            "source_url": URL, "dataset_hash": dataset_hash,
-            "retrieved_at": retrieved.isoformat().replace("+00:00", "Z"),
-        })
+        result.append(
+            {
+                "address_type": "icao",
+                "icao_address": address,
+                "registration": registration,
+                "icao_type_code": icao_type,
+                "model": description,
+                "registered_owner": owner_operator,
+                "tags": ", ".join(tags) or None,
+                "source_url": URL,
+                "dataset_hash": dataset_hash,
+                "retrieved_at": retrieved.isoformat().replace("+00:00", "Z"),
+            }
+        )
     return result

@@ -11,8 +11,10 @@ select
     source_name,
     registry_status,
     {% for column in text_columns -%}
-    if(regexp_contains(trim({{ column }}), r'^\?*$'), null,
-       regexp_replace(trim({{ column }}), r'\s+', ' ')) as {{ column }},
+        if(
+            regexp_contains(trim({{ column }}), r'^\?*$'), null,
+            regexp_replace(trim({{ column }}), r'\s+', ' ')
+        ) as {{ column }},
     {% endfor -%}
     year_mfr,
     source_url,

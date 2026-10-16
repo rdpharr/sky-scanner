@@ -8,8 +8,10 @@ import publish  # noqa: E402
 
 class AuthorTests(unittest.TestCase):
     def test_first_link_text_is_the_credit(self):
-        html = ('<a href="//commons.wikimedia.org/wiki/User:Fir0002">fir0002</a> | flagstaffotos [at] '
-                'gmail.com<br>Canon 20D + Canon 400mm f/5.6 L')
+        html = (
+            '<a href="//commons.wikimedia.org/wiki/User:Fir0002">fir0002</a> | flagstaffotos [at] '
+            "gmail.com<br>Canon 20D + Canon 400mm f/5.6 L"
+        )
         self.assertEqual(publish.author(html), "fir0002")
 
     def test_email_is_removed_from_plain_text(self):

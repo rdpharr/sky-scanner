@@ -23,4 +23,5 @@ select
     s.on_ground,
     s.fields
 from {{ ref('fct_snapshots') }} as s
-inner join {{ ref('pub_aircraft') }} as a using (address_type, address)
+-- Only aircraft in the public layer.
+inner join {{ ref('pub_aircraft') }} using (address_type, address)

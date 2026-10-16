@@ -16,7 +16,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
@@ -49,22 +49,44 @@ async def edition(week_ending: date, model: str, purpose: str) -> dict:
     client = bigquery.Client(project=PROJECT)
     designators = [e["designator"] for s in verified["sections"] for e in s["entries"] if e.get("designator")]
     row = {
-        "edition_id": str(uuid.uuid4()), "week_start": start.isoformat(), "week_end": week_ending.isoformat(),
-        "generated_at": datetime.now(timezone.utc).isoformat(), "purpose": purpose, "model": model,
-        "status": status, "edition": verified, "draft": draft, "verification": report,
-        "photos": publish.photos(client, PUBLIC_DATASET, designators), "trace": run.trace,
-        "tool_calls": len(run.trace), "turns": run.turns, "prompt_tokens": run.prompt_tokens,
-        "completion_tokens": run.completion_tokens, "cost_usd": round(run.cost_usd, 4),
-        "seconds": round(run.seconds, 1), "final_text": run.final_text, "finish_reason": run.finish_reason,
+        "edition_id": str(uuid.uuid4()),
+        "week_start": start.isoformat(),
+        "week_end": week_ending.isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
+        "purpose": purpose,
+        "model": model,
+        "status": status,
+        "edition": verified,
+        "draft": draft,
+        "verification": report,
+        "photos": publish.photos(client, PUBLIC_DATASET, designators),
+        "trace": run.trace,
+        "tool_calls": len(run.trace),
+        "turns": run.turns,
+        "prompt_tokens": run.prompt_tokens,
+        "completion_tokens": run.completion_tokens,
+        "cost_usd": round(run.cost_usd, 4),
+        "seconds": round(run.seconds, 1),
+        "final_text": run.final_text,
+        "finish_reason": run.finish_reason,
         "outline": run.outline,
     }
     publish.save(client, AI_DATASET, row)
     summary = {k: row[k] for k in ("edition_id", "status", "tool_calls", "turns", "cost_usd", "seconds")}
-    summary.update(statements=report["checked"], verified=report["verified"],
-                   verification_rate=report["verification_rate"], entries=entries)
+    summary.update(
+        statements=report["checked"],
+        verified=report["verified"],
+        verification_rate=report["verification_rate"],
+        entries=entries,
+    )
     severity = "ERROR" if status == "rejected" else "INFO"
-    log(severity, f"edition {status}: {report['verified']}/{report['checked']} statements verified, "
-                  f"{entries} entries, ${row['cost_usd']}", event=f"edition_{status}", **summary)
+    log(
+        severity,
+        f"edition {status}: {report['verified']}/{report['checked']} statements verified, "
+        f"{entries} entries, ${row['cost_usd']}",
+        event=f"edition_{status}",
+        **summary,
+    )
     return summary
 
 
@@ -75,8 +97,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--purpose", default="weekly", choices=["weekly", "eval", "test"])
     args = parser.parse_args(argv[1:])
-    week_ending = (date.fromisoformat(args.week_ending) if args.week_ending
-                   else datetime.now(ZoneInfo("America/Los_Angeles")).date())
+    week_ending = (
+        date.fromisoformat(args.week_ending)
+        if args.week_ending
+        else datetime.now(ZoneInfo("America/Los_Angeles")).date()
+    )
     summary = asyncio.run(edition(week_ending, args.model, args.purpose))
     return 0 if summary["status"] != "rejected" else 1
 

@@ -3,5 +3,4 @@
 .venv
 secrets
 data
-demo-output
 __pycache__

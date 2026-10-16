@@ -65,8 +65,12 @@ def _renderings(moment: datetime) -> set[str]:
     out = {moment.isoformat()}
     for t in (moment, moment.astimezone(PACIFIC)):
         hour12 = t.strftime("%I").lstrip("0") or "12"
-        out |= {t.strftime("%Y-%m-%d"), t.strftime("%H:%M"), f"{hour12}:{t.strftime('%M')}",
-                f"{hour12}:{t.strftime('%M')} {t.strftime('%p').lower()}"}
+        out |= {
+            t.strftime("%Y-%m-%d"),
+            t.strftime("%H:%M"),
+            f"{hour12}:{t.strftime('%M')}",
+            f"{hour12}:{t.strftime('%M')} {t.strftime('%p').lower()}",
+        }
     return out
 
 
@@ -89,11 +93,31 @@ def matches(claimed: Any, actual: Any) -> bool:
     return claimed == actual
 
 
-_WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen "
-          "fourteen fifteen sixteen seventeen eighteen nineteen twenty").split()
+_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+]
 _TENS = {30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"}
-_SPOKEN = {0: ("no", "none", "zero", "never"), 1: ("once", "a single", "one"),
-           2: ("twice", "two", "both", "pair")}
+_SPOKEN = {0: ("no", "none", "zero", "never"), 1: ("once", "a single", "one"), 2: ("twice", "two", "both", "pair")}
 _STOP = {"the", "a", "an", "of", "here", "heard", "this", "at", "in", "on", "and", "type", "for"}
 
 
@@ -209,12 +233,17 @@ def verify(draft: dict[str, Any], calls: dict[str, Any]) -> tuple[dict[str, Any]
                 report["verified"] += 1
                 kept.append({"text": s["text"], "evidence": s["evidence"]})
             else:
-                report["removed"].append({"where": where, "text": (s or {}).get("text") if isinstance(s, dict) else str(s),
-                                          "reason": reason})
+                report["removed"].append(
+                    {"where": where, "text": (s or {}).get("text") if isinstance(s, dict) else str(s), "reason": reason}
+                )
         return kept
 
-    edition = {"title": draft.get("title"), "subtitle": draft.get("subtitle"),
-               "summary": keep(draft.get("summary", []), "summary"), "sections": []}
+    edition = {
+        "title": draft.get("title"),
+        "subtitle": draft.get("subtitle"),
+        "summary": keep(draft.get("summary", []), "summary"),
+        "sections": [],
+    }
     for section in draft.get("sections", []):
         heading = section.get("heading", "")
         entries = []
@@ -226,9 +255,15 @@ def verify(draft: dict[str, Any], calls: dict[str, Any]) -> tuple[dict[str, Any]
                 title, correction = checked_title(entry, names)
                 if correction:
                     report["titles_corrected"].append(correction)
-                entries.append({"title": title, "addresses": entry.get("addresses", []),
-                                "designator": entry.get("designator"),
-                                "what_it_is": what[0] if what else None, "details": details})
+                entries.append(
+                    {
+                        "title": title,
+                        "addresses": entry.get("addresses", []),
+                        "designator": entry.get("designator"),
+                        "what_it_is": what[0] if what else None,
+                        "details": details,
+                    }
+                )
             else:
                 report["removed"].append({"where": where, "text": None, "reason": "entry dropped: no verified details"})
         intro = keep(section.get("intro", []), heading)

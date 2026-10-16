@@ -8,16 +8,22 @@ from sky_scanner.ingest import Ingestor
 
 def observation(t=1, address="ABC123"):
     return {
-        "received_at": t, "receiver_id": "rx1", "address": address,
-        "address_type": "icao", "frequency_hz": 1_090_000_000,
+        "received_at": t,
+        "receiver_id": "rx1",
+        "address": address,
+        "address_type": "icao",
+        "frequency_hz": 1_090_000_000,
         "fields": {"callsign": "TEST1"},
     }
 
 
 def interval(name):
     return {
-        "receiver_id": "rx1", "frequency_hz": 1_090_000_000,
-        "started_at": 1, "ended_at": 31, "decoder_version": name,
+        "receiver_id": "rx1",
+        "frequency_hz": 1_090_000_000,
+        "started_at": 1,
+        "ended_at": 31,
+        "decoder_version": name,
     }
 
 
@@ -28,14 +34,11 @@ class IngestTests(unittest.TestCase):
         self.ingestor.storage = self.storage
 
     def event(self, identity, kind="observation", data=None):
-        return {"id": identity, "type": kind,
-                "data": data if data is not None else observation()}
+        return {"id": identity, "type": kind, "data": data if data is not None else observation()}
 
     def test_validates_entire_batch_before_mutating_state(self):
         with self.assertRaisesRegex(ValueError, "unknown event"):
-            self.ingestor.accept([
-                self.event("ok"), self.event("bad", kind="unknown")
-            ])
+            self.ingestor.accept([self.event("ok"), self.event("bad", kind="unknown")])
         self.assertEqual(self.ingestor.seen, {})
         self.assertEqual(self.ingestor.accumulator._buckets, {})
 
@@ -96,10 +99,8 @@ class IngestTests(unittest.TestCase):
     def test_buffer_restore_keeps_oldest_work_within_capacity(self):
         self.ingestor.interval_limit = 2
         self.ingestor.intervals.extend([interval("new1"), interval("new2")])
-        self.ingestor._restore_left(self.ingestor.intervals,
-                                    [interval("old")], 2, "interval")
-        self.assertEqual([i["decoder_version"] for i in self.ingestor.intervals],
-                         ["old", "new1"])
+        self.ingestor._restore_left(self.ingestor.intervals, [interval("old")], 2, "interval")
+        self.assertEqual([i["decoder_version"] for i in self.ingestor.intervals], ["old", "new1"])
 
     def test_invalid_field_timestamp_rejected_without_seen_mutation(self):
         bad = observation()
@@ -118,9 +119,10 @@ class IngestTests(unittest.TestCase):
 
     def test_persist_flushes_using_configured_late_grace(self):
         self.ingestor.late_grace = 12.5
-        with patch("sky_scanner.ingest.time.time", return_value=1000.0), \
-                patch.object(self.ingestor.accumulator, "flush_ready",
-                             return_value=[]) as flush_ready:
+        with (
+            patch("sky_scanner.ingest.time.time", return_value=1000.0),
+            patch.object(self.ingestor.accumulator, "flush_ready", return_value=[]) as flush_ready,
+        ):
             self.ingestor.persist()
         flush_ready.assert_called_once_with(987.5)
 

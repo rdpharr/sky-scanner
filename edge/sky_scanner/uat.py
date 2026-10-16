@@ -13,7 +13,6 @@ import math
 import time
 from typing import Any
 
-
 _QUALIFIERS = {
     "adsb_icao": ("direct", "icao"),
     "adsb_other": ("direct", "uat:adsb_other"),
@@ -43,9 +42,7 @@ def _valid_time(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def normalize_uat(
-    payload: dict[str, Any], receiver_id: str, received_at: float | None = None
-) -> dict[str, Any] | None:
+def normalize_uat(payload: dict[str, Any], receiver_id: str, received_at: float | None = None) -> dict[str, Any] | None:
     """Convert a dump978-fa JSON downlink object to SnapshotAccumulator shape.
 
     The returned dictionary contains ``received_at``, ``receiver_id``,

@@ -23,8 +23,10 @@ select
     nullif(trim(callsign), '') as callsign,
     latitude,
     longitude,
-    if(latitude is not null and longitude is not null,
-       st_geogpoint(longitude, latitude), null) as position,
+    if(
+        latitude is not null and longitude is not null,
+        st_geogpoint(longitude, latitude), null
+    ) as position,
     altitude_baro_ft,
     altitude_geom_ft,
     ground_speed_kt,

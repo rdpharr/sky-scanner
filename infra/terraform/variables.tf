@@ -70,5 +70,5 @@ variable "mcp_domain" {
 variable "notable_image" {
   description = "Image for the first deploy of the notable-edition job. Later images are deployed by CI."
   type        = string
-  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/notable:phase7a-1792184963"
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/notable:phase7d-1792188756"
 }

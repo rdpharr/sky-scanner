@@ -2,12 +2,18 @@
 -- receiver's listening time, so charts can normalize by uptime and shade
 -- hours the receiver was mostly off. Hours with no listening are included.
 with hours as (
-    select hour_start, listening_seconds, uptime_ratio
+    select
+        hour_start,
+        listening_seconds,
+        uptime_ratio
     from {{ ref('fct_receiver_uptime_hourly') }}
 ),
 
 aircraft as (
-    select address_type, address, aircraft_kind
+    select
+        address_type,
+        address,
+        aircraft_kind
     from {{ ref('dim_aircraft') }}
     where is_confirmed
 ),
@@ -26,7 +32,9 @@ heard as (
 ),
 
 sightings as (
-    select timestamp_trunc(started_at, hour) as hour_start, count(*) as sightings_started
+    select
+        timestamp_trunc(started_at, hour) as hour_start,
+        count(*) as sightings_started
     from {{ ref('fct_sightings') }}
     where is_confirmed
     group by hour_start

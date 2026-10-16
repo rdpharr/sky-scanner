@@ -11,13 +11,21 @@ with snapshots as (
 ),
 
 aircraft as (
-    select address_type, address, is_confirmed, is_military, identity_source, first_seen_at
+    select
+        address_type,
+        address,
+        is_confirmed,
+        is_military,
+        identity_source,
+        first_seen_at
     from {{ ref('dim_aircraft') }}
 ),
 
 listening as (
-    select date(started_at, 'America/Los_Angeles') as day, band_mhz,
-           sum(listening_seconds) as listening_seconds
+    select
+        date(started_at, 'America/Los_Angeles') as day,
+        band_mhz,
+        sum(listening_seconds) as listening_seconds
     from {{ ref('stg_capture_intervals') }}
     where ended_at is not null
     group by day, band_mhz
@@ -31,8 +39,10 @@ daily as (
         count(distinct if(a.is_confirmed and a.is_military, s.address, null)) as military_aircraft,
         count(distinct if(a.is_confirmed and a.identity_source is not null, s.address, null))
             as identified_aircraft,
-        count(distinct if(a.is_confirmed
-                          and date(a.first_seen_at, 'America/Los_Angeles') = s.day, s.address, null))
+        count(distinct if(
+            a.is_confirmed
+            and date(a.first_seen_at, 'America/Los_Angeles') = s.day, s.address, null
+        ))
             as first_seen_aircraft,
         count(*) as snapshots,
         sum(s.message_count) as messages

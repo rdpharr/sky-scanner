@@ -43,4 +43,3 @@ class DetailUrlTests(unittest.TestCase):
 
     def test_non_icao_address_carries_its_type(self):
         self.assertEqual(detail_url("ABC123", "tisb_other"), "/aircraft-detail?address=ABC123&type=tisb_other#ABC123")
-

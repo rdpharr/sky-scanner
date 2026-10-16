@@ -11,10 +11,15 @@ select
     aircraft_class,
     aircraft_kind,
     identity_source,
-    {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type') }} as owner_name,
+    {{ public_owner(
+        'owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type'
+    ) }} as owner_name,
     case
         when owner is null then 'Unknown'
-        when {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type') }} is not null
+        when
+            {{ public_owner(
+                'owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type'
+            ) }} is not null
             then coalesce(registrant_category, 'Organization')
         else 'Private or unverified'
     end as owner_category,

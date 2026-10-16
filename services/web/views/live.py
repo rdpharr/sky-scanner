@@ -21,9 +21,11 @@ TRAIL_MINUTES = 10
 st.set_page_config(layout="wide")  # maps, charts and tables use the full width
 
 title = st.empty()
-st.markdown(f"Every aircraft a receive-only ADS-B/UAT station in northwest Las Vegas heard in the last "
-            f"{TRAIL_MINUTES} minutes, refreshed every {REFRESH_SECONDS} seconds. Owners of privately "
-            "registered aircraft are never named.")
+st.markdown(
+    f"Every aircraft a receive-only ADS-B/UAT station in northwest Las Vegas heard in the last "
+    f"{TRAIL_MINUTES} minutes, refreshed every {REFRESH_SECONDS} seconds. Owners of privately "
+    "registered aircraft are never named."
+)
 
 if "live_until" not in st.session_state or st.button("Resume live updates"):
     st.session_state.live_until = time.time() + LIVE_MINUTES * 60
@@ -40,7 +42,7 @@ def load() -> pd.DataFrame:
                altitude_baro_ft, ground_speed_kt, track_deg, squawk, message_count,
                registration, type_name, aircraft_class, aircraft_kind, operator,
                timestamp_diff(current_timestamp(), last_received_at, second) as age_seconds
-        from {bq.table('pub_live_snapshots')}
+        from {bq.table("pub_live_snapshots")}
         where bucket_start >= timestamp_sub(current_timestamp(), interval {TRAIL_MINUTES} minute)
     """)
 
@@ -51,13 +53,18 @@ def render() -> None:
     df = load()
     if df.empty:
         title.title("No aircraft in range right now")
-        st.info(f"Nothing was heard in the last {TRAIL_MINUTES} minutes. The receiver may be offline: "
-                "Data health shows when it last listened.", title="Nothing heard")
+        st.info(
+            f"Nothing was heard in the last {TRAIL_MINUTES} minutes. The receiver may be offline: "
+            "Data health shows when it last listened.",
+            title="Nothing heard",
+        )
         return
     latest = df.sort_values("bucket_start").groupby("address").tail(1)
     now = int((latest.age_seconds <= 120).sum())
-    title.title(f"{now} aircraft in range right now" if now != 1 else "1 aircraft in range right now",
-                help="Aircraft heard in the last 2 minutes.")
+    title.title(
+        f"{now} aircraft in range right now" if now != 1 else "1 aircraft in range right now",
+        help="Aircraft heard in the last 2 minutes.",
+    )
 
     c1, c2, c3 = st.columns(3)
     c1.metric(f"Aircraft in the last {TRAIL_MINUTES} minutes", len(latest))
@@ -65,50 +72,93 @@ def render() -> None:
     c3.metric("Newest message", f"{int(latest.age_seconds.min())} s ago")
 
     positioned = df.dropna(subset=["latitude", "longitude"]).sort_values("bucket_start")
-    trails = pd.DataFrame([
-        {"path": g[["longitude", "latitude"]].values.tolist(), "color": color(g.aircraft_kind.iloc[-1])}
-        for _, g in positioned.groupby("address") if len(g) > 1
-    ], columns=["path", "color"])
+    trails = pd.DataFrame(
+        [
+            {"path": g[["longitude", "latitude"]].values.tolist(), "color": color(g.aircraft_kind.iloc[-1])}
+            for _, g in positioned.groupby("address")
+            if len(g) > 1
+        ],
+        columns=["path", "color"],
+    )
     points = positioned.groupby("address").tail(1).copy()
     points["color"] = points.aircraft_kind.map(color)
-    points["label"] = (points.callsign.fillna(points.registration).fillna(points.address)
-                       + ", " + points.type_name.fillna("type not yet identified"))
+    points["label"] = (
+        points.callsign.fillna(points.registration).fillna(points.address)
+        + ", "
+        + points.type_name.fillna("type not yet identified")
+    )
     points["alt"] = points.altitude_baro_ft.map(lambda a: f"{a:,.0f} ft" if pd.notna(a) else "altitude unknown")
 
     dark = st.context.theme.type == "dark"
-    st.pydeck_chart(pdk.Deck(
-        map_style=pdk.map_styles.CARTO_DARK if dark else pdk.map_styles.CARTO_LIGHT,
-        initial_view_state=pdk.ViewState(latitude=36.1, longitude=-115.2, zoom=7.2),
-        layers=[
-            pdk.Layer("PathLayer", trails, get_path="path", get_color="color",
-                      width_min_pixels=2, opacity=0.5),
-            pdk.Layer("ScatterplotLayer", points, get_position=["longitude", "latitude"],
-                      get_fill_color="color", get_radius=1800, radius_min_pixels=4,
-                      pickable=True),
-        ],
-        tooltip={"text": "{label}\n{alt}"},
-    ), height=560, alt="Map of aircraft positions around Las Vegas with their recent tracks")
+    st.pydeck_chart(
+        pdk.Deck(
+            map_style=pdk.map_styles.CARTO_DARK if dark else pdk.map_styles.CARTO_LIGHT,
+            initial_view_state=pdk.ViewState(latitude=36.1, longitude=-115.2, zoom=7.2),
+            layers=[
+                pdk.Layer("PathLayer", trails, get_path="path", get_color="color", width_min_pixels=2, opacity=0.5),
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    points,
+                    get_position=["longitude", "latitude"],
+                    get_fill_color="color",
+                    get_radius=1800,
+                    radius_min_pixels=4,
+                    pickable=True,
+                ),
+            ],
+            tooltip={"text": "{label}\n{alt}"},
+        ),
+        height=560,
+        alt="Map of aircraft positions around Las Vegas with their recent tracks",
+    )
     unplaced = len(latest) - len(points)
-    st.caption(f"Blue: airline. Red: military. Ochre: other. Trails show the last {TRAIL_MINUTES} minutes."
-               + (f" {unplaced} aircraft sent no position." if unplaced else ""))
+    st.caption(
+        f"Blue: airline. Red: military. Ochre: other. Trails show the last {TRAIL_MINUTES} minutes."
+        + (f" {unplaced} aircraft sent no position." if unplaced else "")
+    )
 
     table = latest.assign(heard=local(latest.bucket_start).dt.strftime("%H:%M:%S"))
     text = ["callsign", "registration", "type_name", "aircraft_kind", "operator"]
-    table["aircraft"] = [detail_url(a, t, r, c) for a, t, r, c in
-                         zip(table.address, table.address_type, table.registration, table.callsign)]
+    table["aircraft"] = [
+        detail_url(a, t, r, c)
+        for a, t, r, c in zip(table.address, table.address_type, table.registration, table.callsign)
+    ]
     table[text] = table[text].astype("string").fillna("")  # blank, not "None", for unknowns
     st.dataframe(
-        table.sort_values("age_seconds")[["heard", "aircraft", "callsign", "registration", "type_name",
-                                          "aircraft_kind", "operator", "altitude_baro_ft",
-                                          "ground_speed_kt", "band_mhz", "address"]],
-        hide_index=True, width="stretch", alt="Aircraft heard in the last 10 minutes, newest first",
-        column_config={"heard": "Heard (PT)", "callsign": "Callsign",
-                       "aircraft": st.column_config.LinkColumn("Aircraft", display_text=r"#(.+)$",
-                                                               help="Open the aircraft's page"), "registration": "Registration",
-                       "operator": "Operator", "address": "Address", "type_name": "Type", "aircraft_kind": "Kind",
-                       "altitude_baro_ft": st.column_config.NumberColumn("Altitude (ft)", format="%d"),
-                       "ground_speed_kt": st.column_config.NumberColumn("Speed (kt)", format="%d"),
-                       "band_mhz": "MHz"})
+        table.sort_values("age_seconds")[
+            [
+                "heard",
+                "aircraft",
+                "callsign",
+                "registration",
+                "type_name",
+                "aircraft_kind",
+                "operator",
+                "altitude_baro_ft",
+                "ground_speed_kt",
+                "band_mhz",
+                "address",
+            ]
+        ],
+        hide_index=True,
+        width="stretch",
+        alt="Aircraft heard in the last 10 minutes, newest first",
+        column_config={
+            "heard": "Heard (PT)",
+            "callsign": "Callsign",
+            "aircraft": st.column_config.LinkColumn(
+                "Aircraft", display_text=r"#(.+)$", help="Open the aircraft's page"
+            ),
+            "registration": "Registration",
+            "operator": "Operator",
+            "address": "Address",
+            "type_name": "Type",
+            "aircraft_kind": "Kind",
+            "altitude_baro_ft": st.column_config.NumberColumn("Altitude (ft)", format="%d"),
+            "ground_speed_kt": st.column_config.NumberColumn("Speed (kt)", format="%d"),
+            "band_mhz": "MHz",
+        },
+    )
 
 
 if not polling:

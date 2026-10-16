@@ -541,7 +541,7 @@ hourly (build except daily models), daily (build everything) or freshness.
 {% enddocs %}
 
 {% docs col_model %}
-OpenRouter model that wrote the edition.
+View the column belongs to (null for metrics).
 {% enddocs %}
 
 {% docs col_name %}
@@ -550,6 +550,10 @@ Metric, view or column name.
 
 {% docs col_nodes %}
 Models, tests and sources processed.
+{% enddocs %}
+
+{% docs col_notable_editions__model %}
+OpenRouter model that wrote the edition.
 {% enddocs %}
 
 {% docs col_notable_score %}

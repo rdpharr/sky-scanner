@@ -82,15 +82,5 @@ services:
     depends_on:
       db: {condition: service_healthy}
     command: ["python", "-m", "sky_scanner.replicator"]
-  web:
-    <<: *app
-    environment:
-      # Read-only exploration role; the page has no write paths.
-      WEB_DATABASE_URL: postgresql://explorer:${EXPLORER_PASSWORD}@db/sky_scanner?sslmode=require
-    ports:
-      - "${DB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"
-    depends_on:
-      db: {condition: service_healthy}
-    command: ["python", "-m", "sky_scanner.web"]
 volumes:
   postgres-data-v1:

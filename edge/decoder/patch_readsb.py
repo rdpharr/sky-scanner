@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Patch the pinned readsb net_io.c build with opt-in JSONL per-message events."""
 
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 
 def patch(source_dir: Path) -> None:

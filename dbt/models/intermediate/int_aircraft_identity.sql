@@ -18,9 +18,20 @@ latest as (
     where is_latest and registry_status = 'present'
 ),
 
-faa as (select * from latest where source_name = 'faa_registry'),
-opensky as (select * from latest where source_name = 'opensky'),
-plane_alert as (select * from latest where source_name = 'plane_alert_mil'),
+faa as (
+    select * from latest
+    where source_name = 'faa_registry'
+),
+
+opensky as (
+    select * from latest
+    where source_name = 'opensky'
+),
+
+plane_alert as (
+    select * from latest
+    where source_name = 'plane_alert_mil'
+),
 
 tar1090 as (
     select
@@ -28,10 +39,10 @@ tar1090 as (
         -- "miscode" rows identify transponders broadcasting an invalid address;
         -- nothing else in them describes a real aircraft.
         'miscode' in unnest(split(coalesce(tags, ''), ', '))
-            or starts_with(lower(coalesce(registration, '')), 'miscode')
-            or starts_with(lower(coalesce(model, '')), 'miscode')
-            or starts_with(lower(coalesce(icao_type_code, '')), 'miscode')
-            or starts_with(lower(coalesce(registered_owner, '')), 'miscode') as is_miscode,
+        or starts_with(lower(coalesce(registration, '')), 'miscode')
+        or starts_with(lower(coalesce(model, '')), 'miscode')
+        or starts_with(lower(coalesce(icao_type_code, '')), 'miscode')
+        or starts_with(lower(coalesce(registered_owner, '')), 'miscode') as is_miscode,
         split(coalesce(tags, ''), ', ') as tag_list
     from latest
     where source_name = 'tar1090_db'
@@ -83,7 +94,10 @@ joined as (
 
 faa_designator as (
     -- FAA model text mapped to an ICAO designator by the first matching pattern.
-    select j.address_type, j.address, p.designator
+    select
+        j.address_type,
+        j.address,
+        p.designator
     from joined as j
     inner join {{ ref('faa_model_type_patterns') }} as p
         on regexp_contains(upper(j.faa_model), p.model_pattern)
@@ -95,8 +109,10 @@ select
     j.*,
     coalesce(f.designator, j.tar1090_type_code, j.opensky_type_code, j.plane_alert_type_code)
         as designator,
-    coalesce(j.faa_registration, j.tar1090_registration, j.opensky_registration,
-             j.plane_alert_registration) as registration,
+    coalesce(
+        j.faa_registration, j.tar1090_registration, j.opensky_registration,
+        j.plane_alert_registration
+    ) as registration,
     case
         when j.faa_registration is not null then 'faa_registry'
         when coalesce(j.tar1090_registration, j.tar1090_type_code) is not null then 'tar1090_db'
@@ -112,7 +128,9 @@ select
         when j.opensky_owner is not null then 'opensky'
     end as owner_source,
     coalesce(j.opensky_operator, j.opensky_operator_icao) as civil_operator,
-    coalesce(nullif(array_to_string([j.faa_manufacturer, j.faa_model], ' '), ''),
-             j.tar1090_model, j.opensky_model, j.plane_alert_model) as aircraft_description
+    coalesce(
+        nullif(array_to_string([j.faa_manufacturer, j.faa_model], ' '), ''),
+        j.tar1090_model, j.opensky_model, j.plane_alert_model
+    ) as aircraft_description
 from joined as j
 left join faa_designator as f using (address_type, address)

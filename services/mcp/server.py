@@ -15,9 +15,9 @@ import threading
 import time
 from collections import deque
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import bigquery
@@ -61,8 +61,7 @@ Rules for answers:
   between two bands, and outages happen (see receiver_status).
 """
 
-READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False,
-                            idempotent_hint=True, open_world_hint=False)
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 mcp = MCPServer(
     "sky-scanner",
@@ -166,25 +165,28 @@ def date_range(start_date: str, end_date: str) -> tuple[str, str]:
 
 
 # SQL for "this timestamp falls in the Pacific date range [@start, @end)".
-IN_RANGE = ("{col} >= timestamp(@start, 'America/Los_Angeles') "
-            "and {col} < timestamp(@end, 'America/Los_Angeles')")
+IN_RANGE = "{col} >= timestamp(@start, 'America/Los_Angeles') and {col} < timestamp(@end, 'America/Los_Angeles')"
 
 
 def resolve(identifier: str) -> dict[str, Any]:
     """Find one public aircraft by address, registration or callsign."""
-    rows = query(f"""
+    rows = query(
+        f"""
         select address_type, address
-        from {table('pub_aircraft')}
+        from {table("pub_aircraft")}
         where address = @id or upper(registration) = @id or latest_callsign = @id
            or @id in unnest(callsigns)
         order by (address = @id) desc, (upper(registration) = @id) desc, last_seen_at desc
-        limit 1""", id=identifier.strip().upper())
+        limit 1""",
+        id=identifier.strip().upper(),
+    )
     if not rows:
         raise ToolError(f"No aircraft matches {identifier!r}. Try search_aircraft.")
     return rows[0]
 
 
 # ---------------------------------------------------------------- context
+
 
 @mcp.tool(annotations=READ_ONLY)
 def get_definitions(term: str = "") -> dict[str, Any]:
@@ -194,21 +196,30 @@ def get_definitions(term: str = "") -> dict[str, Any]:
     With a term (e.g. "sighting", "confirmed", "circling"): metrics and columns
     whose name or definition mentions it. Prefer these definitions to your own.
     """
-    rows = query(f"""
+    rows = query(
+        f"""
         select kind, name, model, label, description, metric_type, formula, filter
-        from {table('pub_definitions')}
+        from {table("pub_definitions")}
         where kind = 'metric'
            or (@term = '' and kind = 'model')
            or (@term != '' and (lower(name) like concat('%', @term, '%')
                                 or lower(description) like concat('%', @term, '%')))
-        order by kind, model, name""", term=term.strip().lower())
-    metrics = [r for r in rows if r["kind"] == "metric"
-               and (not term or term.lower() in (r["name"] + (r["description"] or "")).lower())]
+        order by kind, model, name""",
+        term=term.strip().lower(),
+    )
+    metrics = [
+        r
+        for r in rows
+        if r["kind"] == "metric" and (not term or term.lower() in (r["name"] + (r["description"] or "")).lower())
+    ]
     if not term:
         views = [{"view": r["name"], "description": r["description"]} for r in rows if r["kind"] == "model"]
         return {"metrics": metrics, "views": views}
-    columns = [{"view": r["model"], "column": r["name"], "description": r["description"]}
-               for r in rows if r["kind"] == "column"]
+    columns = [
+        {"view": r["model"], "column": r["name"], "description": r["description"]}
+        for r in rows
+        if r["kind"] == "column"
+    ]
     return {"metrics": metrics, "columns": columns}
 
 
@@ -219,10 +230,13 @@ def describe_dataset(view: str = "") -> dict[str, Any]:
     Give a view name (e.g. "pub_sightings") for its columns, or nothing for
     the list of views. Useful before run_sql.
     """
-    rows = query(f"""
-        select kind, name, model, description from {table('pub_definitions')}
+    rows = query(
+        f"""
+        select kind, name, model, description from {table("pub_definitions")}
         where (@view = '' and kind = 'model') or (@view != '' and model = @view)
-        order by model, kind desc""", view=view.strip())
+        order by model, kind desc""",
+        view=view.strip(),
+    )
     views: dict[str, dict[str, Any]] = {}
     for r in rows:
         entry = views.setdefault(r["model"], {"view": r["model"], "description": None, "columns": {}})
@@ -242,15 +256,17 @@ AIRCRAFT_COLUMNS = """address_type, address, registration, designator, type_name
 
 
 @mcp.tool(annotations=READ_ONLY)
-def search_aircraft(text: str = "", kind: str = "", military_only: bool = False,
-                    heard_within_days: int = 30, limit: int = 20) -> list[dict[str, Any]]:
+def search_aircraft(
+    text: str = "", kind: str = "", military_only: bool = False, heard_within_days: int = 30, limit: int = 20
+) -> list[dict[str, Any]]:
     """Find confirmed aircraft by registration, callsign, type, operator or address.
 
     kind: "Airline", "Military" or "Other" (empty for all). heard_within_days
     filters on last_seen_at (0 for all time). Newest first, at most 50.
     """
-    return query(f"""
-        select {AIRCRAFT_COLUMNS} from {table('pub_aircraft')}
+    return query(
+        f"""
+        select {AIRCRAFT_COLUMNS} from {table("pub_aircraft")}
         where is_confirmed
           and (@text = '' or upper(concat(ifnull(registration,''), ' ', ifnull(latest_callsign,''), ' ',
                ifnull(type_name,''), ' ', ifnull(operator,''), ' ', address, ' ', ifnull(designator,'')))
@@ -259,8 +275,12 @@ def search_aircraft(text: str = "", kind: str = "", military_only: bool = False,
           and (not @military_only or is_military)
           and (@days = 0 or last_seen_at >= timestamp_sub(current_timestamp(), interval @days day))
         order by last_seen_at desc limit @limit""",
-        text=text.strip().upper(), kind=kind.strip().capitalize(), military_only=military_only,
-        days=clamp(heard_within_days, 0, 3650), limit=clamp(limit, 1, 50))
+        text=text.strip().upper(),
+        kind=kind.strip().capitalize(),
+        military_only=military_only,
+        days=clamp(heard_within_days, 0, 3650),
+        limit=clamp(limit, 1, 50),
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -271,28 +291,37 @@ def get_aircraft(identifier: str) -> dict[str, Any]:
     identifier: ICAO address (ADFDF9), registration (N969NN) or callsign (SWA2813).
     """
     key = resolve(identifier)
-    aircraft = query(f"""select {AIRCRAFT_COLUMNS}, is_confirmed from {table('pub_aircraft')}
+    aircraft = query(
+        f"""select {AIRCRAFT_COLUMNS}, is_confirmed from {table("pub_aircraft")}
                          where address_type = @t and address = @a""",
-                     t=key["address_type"], a=key["address"])[0]
-    aircraft["recent_sightings"] = query(f"""
+        t=key["address_type"],
+        a=key["address"],
+    )[0]
+    aircraft["recent_sightings"] = query(
+        f"""
         select started_at, ended_at, duration_minutes, messages, callsigns, min_altitude_baro_ft,
                max_altitude_baro_ft, max_ground_speed_kt, positioned_snapshots, circling_ratio,
                emergency_squawk
-        from {table('pub_sightings')} where address_type = @t and address = @a
-        order by started_at desc limit 5""", t=key["address_type"], a=key["address"])
+        from {table("pub_sightings")} where address_type = @t and address = @a
+        order by started_at desc limit 5""",
+        t=key["address_type"],
+        a=key["address"],
+    )
     if aircraft["is_military"] and aircraft["callsigns"]:
         # War Watch Intel callsign families (e.g. TALON for TALON95): supporting
         # evidence only, since callwords are shared across units.
         lookups = query(f"""select callword, lookup_status, source_url, lookup_data
-                            from {table('pub_callword_lookups')}""")
+                            from {table("pub_callword_lookups")}""")
         aircraft["callword_lookups"] = [
-            r for r in lookups if any(cs.startswith(r["callword"]) for cs in aircraft["callsigns"])]
+            r for r in lookups if any(cs.startswith(r["callword"]) for cs in aircraft["callsigns"])
+        ]
     return aircraft
 
 
 @mcp.tool(annotations=READ_ONLY)
-def get_sightings(identifier: str, days: int = 30, limit: int = 50,
-                  start_date: str = "", end_date: str = "") -> list[dict[str, Any]]:
+def get_sightings(
+    identifier: str, days: int = 30, limit: int = 50, start_date: str = "", end_date: str = ""
+) -> list[dict[str, Any]]:
     """An aircraft's sightings (runs of reports with no gap over 10 minutes),
     newest first, with altitude, speed and flight-path features. Give
     start_date/end_date (Pacific YYYY-MM-DD, inclusive) for a specific
@@ -300,25 +329,36 @@ def get_sightings(identifier: str, days: int = 30, limit: int = 50,
     key = resolve(identifier)
     if start_date or end_date:
         start, end = date_range(start_date, end_date)
-        return query(f"""
+        return query(
+            f"""
             select sighting_number, started_at, ended_at, duration_minutes, snapshots, messages,
                    bands_mhz, callsigns, squawks, min_altitude_baro_ft, max_altitude_baro_ft,
                    max_ground_speed_kt, positioned_snapshots, path_nm, displacement_nm, circling_ratio,
                    total_turn_deg, low_away_from_airport_snapshots, closest_airport_nm, emergency_squawk
-            from {table('pub_sightings')}
-            where address_type = @t and address = @a and {IN_RANGE.format(col='started_at')}
+            from {table("pub_sightings")}
+            where address_type = @t and address = @a and {IN_RANGE.format(col="started_at")}
             order by started_at desc limit @limit""",
-            t=key["address_type"], a=key["address"], start=start, end=end, limit=clamp(limit, 1, 200))
-    return query(f"""
+            t=key["address_type"],
+            a=key["address"],
+            start=start,
+            end=end,
+            limit=clamp(limit, 1, 200),
+        )
+    return query(
+        f"""
         select sighting_number, started_at, ended_at, duration_minutes, snapshots, messages,
                bands_mhz, callsigns, squawks, min_altitude_baro_ft, max_altitude_baro_ft,
                max_ground_speed_kt, positioned_snapshots, path_nm, displacement_nm, circling_ratio,
                total_turn_deg, low_away_from_airport_snapshots, closest_airport_nm, emergency_squawk
-        from {table('pub_sightings')}
+        from {table("pub_sightings")}
         where address_type = @t and address = @a
           and started_at >= timestamp_sub(current_timestamp(), interval @days day)
         order by started_at desc limit @limit""",
-        t=key["address_type"], a=key["address"], days=clamp(days, 1, 3650), limit=clamp(limit, 1, 200))
+        t=key["address_type"],
+        a=key["address"],
+        days=clamp(days, 1, 3650),
+        limit=clamp(limit, 1, 200),
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -333,27 +373,36 @@ def get_flight_summary(identifier: str, sighting_started_at: str = "") -> dict[s
     features are null when no positions were decoded.
     """
     key = resolve(identifier)
-    rows = query(f"""
+    rows = query(
+        f"""
         select * except (address_type, address, sighting_id)
-        from {table('pub_sightings')}
+        from {table("pub_sightings")}
         where address_type = @t and address = @a
           and (@start = '' or started_at = timestamp(@start))
         order by started_at desc limit 1""",
-        t=key["address_type"], a=key["address"], start=sighting_started_at.strip())
+        t=key["address_type"],
+        a=key["address"],
+        start=sighting_started_at.strip(),
+    )
     if not rows:
         raise ToolError("No such sighting; list them with get_sightings.")
     sighting = rows[0]
-    stats = query(f"""
+    stats = query(
+        f"""
         select count(*) as snapshots,
                round(avg(altitude_baro_ft)) as avg_altitude_baro_ft,
                round(avg(ground_speed_kt)) as avg_ground_speed_kt,
                round(min(latitude), 2) as south, round(max(latitude), 2) as north,
                round(min(longitude), 2) as west, round(max(longitude), 2) as east
-        from {table('pub_snapshots')}
+        from {table("pub_snapshots")}
         where address_type = @t and address = @a
           and bucket_start between timestamp_sub(timestamp(@start), interval 15 second)
                                and timestamp(@end)""",
-        t=key["address_type"], a=key["address"], start=sighting["started_at"], end=sighting["ended_at"])
+        t=key["address_type"],
+        a=key["address"],
+        start=sighting["started_at"],
+        end=sighting["ended_at"],
+    )
     return {"address": key["address"], "sighting": sighting, "track": stats[0] if stats else None}
 
 
@@ -362,19 +411,25 @@ def get_type_info(designator: str) -> dict[str, Any]:
     """An aircraft type (ICAO designator, e.g. B738, H60, VC25): class, engines,
     how many public aircraft of it were heard and how rare it is here, with
     example aircraft and a Wikipedia article."""
-    rows = query(f"""
+    rows = query(
+        f"""
         with ranked as (
             select *, rank() over (order by aircraft_heard desc) as popularity_rank,
                    count(*) over () as types_heard
-            from {table('pub_aircraft_types')})
-        select * from ranked where designator = @d""", d=designator.strip().upper())
+            from {table("pub_aircraft_types")})
+        select * from ranked where designator = @d""",
+        d=designator.strip().upper(),
+    )
     if not rows:
         raise ToolError(f"No public aircraft of type {designator!r} has been heard.")
     info = rows[0]
-    info["examples"] = query(f"""
+    info["examples"] = query(
+        f"""
         select registration, latest_callsign, operator, aircraft_kind, last_seen_at
-        from {table('pub_aircraft')} where designator = @d and is_confirmed
-        order by last_seen_at desc limit 5""", d=info["designator"])
+        from {table("pub_aircraft")} where designator = @d and is_confirmed
+        order by last_seen_at desc limit 5""",
+        d=info["designator"],
+    )
     return info
 
 
@@ -384,27 +439,44 @@ def get_history(identifier: str) -> dict[str, Any]:
     seen, and the hours of day (Pacific) it is usually heard. Use it to tell a
     regular from a first-time or unusual visitor."""
     key = resolve(identifier)
-    weekly = query(f"""
+    weekly = query(
+        f"""
         select date_trunc(date(started_at, 'America/Los_Angeles'), week(monday)) as week_starting,
                count(*) as sightings, sum(messages) as messages
-        from {table('pub_sightings')} where address_type = @t and address = @a
-        group by week_starting order by week_starting""", t=key["address_type"], a=key["address"])
-    hours = query(f"""
+        from {table("pub_sightings")} where address_type = @t and address = @a
+        group by week_starting order by week_starting""",
+        t=key["address_type"],
+        a=key["address"],
+    )
+    hours = query(
+        f"""
         select extract(hour from started_at at time zone 'America/Los_Angeles') as hour_pt,
                count(*) as sightings
-        from {table('pub_sightings')} where address_type = @t and address = @a
-        group by hour_pt order by hour_pt""", t=key["address_type"], a=key["address"])
-    days = query(f"""
+        from {table("pub_sightings")} where address_type = @t and address = @a
+        group by hour_pt order by hour_pt""",
+        t=key["address_type"],
+        a=key["address"],
+    )
+    days = query(
+        f"""
         select count(distinct date(started_at, 'America/Los_Angeles')) as days_seen,
                min(started_at) as first_sighting, max(started_at) as latest_sighting
-        from {table('pub_sightings')} where address_type = @t and address = @a""",
-        t=key["address_type"], a=key["address"])[0]
-    return {"address": key["address"], **days, "weekly": weekly, "hours_pt": hours,
-            "note": "Collection began 2026-09-26, so 'first seen' before late November "
-                    "2026 does not mean the aircraft is new to the area."}
+        from {table("pub_sightings")} where address_type = @t and address = @a""",
+        t=key["address_type"],
+        a=key["address"],
+    )[0]
+    return {
+        "address": key["address"],
+        **days,
+        "weekly": weekly,
+        "hours_pt": hours,
+        "note": "Collection began 2026-09-26, so 'first seen' before late November "
+        "2026 does not mean the aircraft is new to the area.",
+    }
 
 
 # ---------------------------------------------------------------- activity
+
 
 @mcp.tool(annotations=READ_ONLY)
 def recent_activity(minutes: int = 10) -> dict[str, Any]:
@@ -412,7 +484,8 @@ def recent_activity(minutes: int = 10) -> dict[str, Any]:
     position, altitude and speed per aircraft. Identity fields are null for
     aircraft first heard since the last hourly build."""
     minutes = clamp(minutes, 1, 30)
-    aircraft = query(f"""
+    aircraft = query(
+        f"""
         select address, any_value(callsign having max bucket_start) as callsign,
                any_value(registration) as registration, any_value(type_name) as type_name,
                any_value(aircraft_kind) as aircraft_kind, any_value(operator) as operator,
@@ -422,9 +495,11 @@ def recent_activity(minutes: int = 10) -> dict[str, Any]:
                any_value(latitude having max bucket_start) as latitude,
                any_value(longitude having max bucket_start) as longitude,
                sum(message_count) as messages
-        from {table('pub_live_snapshots')}
+        from {table("pub_live_snapshots")}
         where bucket_start >= timestamp_sub(current_timestamp(), interval @m minute)
-        group by address order by last_heard desc""", m=minutes)
+        group by address order by last_heard desc""",
+        m=minutes,
+    )
     return {"minutes": minutes, "aircraft_count": len(aircraft), "aircraft": aircraft}
 
 
@@ -435,10 +510,14 @@ def traffic_stats(start_date: str = "", end_date: str = "") -> list[dict[str, An
     rates per listening hour. Compare days with the per-listening-hour rates;
     raw counts depend on time spent on each band."""
     start, end = date_range(start_date, end_date)
-    return query(f"""
-        select * from {table('pub_daily_traffic')}
+    return query(
+        f"""
+        select * from {table("pub_daily_traffic")}
         where day >= date(@start) and day < date(@end)
-        order by day desc, band_mhz""", start=start, end=end)
+        order by day desc, band_mhz""",
+        start=start,
+        end=end,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -447,24 +526,27 @@ def military_sightings(start_date: str = "", end_date: str = "") -> list[dict[st
     default the last 7 complete days), with type, operator, the rules that
     classified them as military and their sightings."""
     start, end = date_range(start_date, end_date)
-    return query(f"""
+    return query(
+        f"""
         with recent as (
             select address_type, address, count(*) as sightings, min(started_at) as first_sighting,
                    max(ended_at) as latest_sighting, max(max_altitude_baro_ft) as max_altitude_baro_ft
-            from {table('pub_sightings')}
-            where is_military and {IN_RANGE.format(col='started_at')}
+            from {table("pub_sightings")}
+            where is_military and {IN_RANGE.format(col="started_at")}
             group by address_type, address)
         select a.address, a.registration, a.type_name, a.designator, a.operator, a.military_rules,
                a.callsigns, a.is_ladd, a.is_pia, r.sightings, r.first_sighting, r.latest_sighting,
                r.max_altitude_baro_ft
-        from recent r join {table('pub_aircraft')} a using (address_type, address)
+        from recent r join {table("pub_aircraft")} a using (address_type, address)
         where a.is_confirmed
-        order by r.latest_sighting desc""", start=start, end=end)
+        order by r.latest_sighting desc""",
+        start=start,
+        end=end,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
-def get_notable_candidates(end_date: str = "", limit: int = 25, per_type: int = 1,
-                           kind: str = "") -> dict[str, Any]:
+def get_notable_candidates(end_date: str = "", limit: int = 25, per_type: int = 1, kind: str = "") -> dict[str, Any]:
     """Aircraft heard in a 7-day window, ranked by a notability score, with
     the reasons each scored. A starting point for "what was notable this
     week": investigate candidates with get_aircraft, get_history,
@@ -478,22 +560,26 @@ def get_notable_candidates(end_date: str = "", limit: int = 25, per_type: int = 
     each separately so rare civil aircraft are not crowded out.
     """
     week_ending = date_range("", end_date)[1] if end_date else ""
-    rows = query(f"""
-        select * from {table('pub_notable_candidates')}
+    rows = query(
+        f"""
+        select * from {table("pub_notable_candidates")}
         where window_end = coalesce(date(nullif(@week_ending, '')),
-                                    (select max(window_end) from {table('pub_notable_candidates')}))
+                                    (select max(window_end) from {table("pub_notable_candidates")}))
           and rank_within_type <= @per_type
           and (@kind = '' or (@kind = 'military') = is_military)
         order by notable_score desc limit @limit""",
-        week_ending=week_ending, per_type=clamp(per_type, 1, 10), limit=clamp(limit, 1, 50),
-        kind=kind.strip().lower() if kind.strip().lower() in ("military", "civil") else "")
+        week_ending=week_ending,
+        per_type=clamp(per_type, 1, 10),
+        limit=clamp(limit, 1, 50),
+        kind=kind.strip().lower() if kind.strip().lower() in ("military", "civil") else "",
+    )
     return {
         "scoring": "notable_score = 1.0 emergency squawk + 0.45 type rarity here + 0.20 military "
-                   "+ 0.15 vintage civil (built 1975 or earlier) "
-                   "+ 0.20 civil government/public-safety owner or operator + 0.25 flight path "
-                   "unusual for this aircraft + 0.15 frequency novelty + 0.10 foreign non-airline; "
-                   "airliners x0.3 unless an emergency. frequency_score is null until about "
-                   "2026-11-21 (too little history). Scores rank candidates; they are not findings.",
+        "+ 0.15 vintage civil (built 1975 or earlier) "
+        "+ 0.20 civil government/public-safety owner or operator + 0.25 flight path "
+        "unusual for this aircraft + 0.15 frequency novelty + 0.10 foreign non-airline; "
+        "airliners x0.3 unless an emergency. frequency_score is null until about "
+        "2026-11-21 (too little history). Scores rank candidates; they are not findings.",
         "candidates": rows,
     }
 
@@ -505,16 +591,20 @@ def week_summary(start_date: str = "", end_date: str = "") -> dict[str, Any]:
     first and last report, aircraft by kind and class, LADD and PIA counts,
     foreign-registered wide-bodies, and listening hours per band."""
     start, end = date_range(start_date, end_date)
-    totals = query(f"""
+    totals = query(
+        f"""
         select count(*) as snapshots, sum(message_count) as messages,
                count(distinct address) as addresses_heard,
                min(first_received_at) as first_report, max(last_received_at) as last_report
-        from {table('pub_snapshots')} where {IN_RANGE.format(col='bucket_start')}""",
-        start=start, end=end)[0]
-    aircraft = query(f"""
+        from {table("pub_snapshots")} where {IN_RANGE.format(col="bucket_start")}""",
+        start=start,
+        end=end,
+    )[0]
+    aircraft = query(
+        f"""
         with heard as (
-            select distinct address_type, address from {table('pub_sightings')}
-            where {IN_RANGE.format(col='started_at')})
+            select distinct address_type, address from {table("pub_sightings")}
+            where {IN_RANGE.format(col="started_at")})
         select count(*) as confirmed_aircraft,
                countif(a.aircraft_kind = 'Airline') as airline,
                countif(a.aircraft_kind = 'Military') as military,
@@ -523,26 +613,47 @@ def week_summary(start_date: str = "", end_date: str = "") -> dict[str, Any]:
                countif(a.aircraft_class = 'Wide-body jet' and a.country != 'United States'
                        and a.aircraft_kind != 'Military') as foreign_wide_bodies,
                countif(a.identity_source is null) as unidentified
-        from heard join {table('pub_aircraft')} a using (address_type, address)
-        where a.is_confirmed""", start=start, end=end)[0]
-    classes = query(f"""
+        from heard join {table("pub_aircraft")} a using (address_type, address)
+        where a.is_confirmed""",
+        start=start,
+        end=end,
+    )[0]
+    classes = query(
+        f"""
         with heard as (
-            select distinct address_type, address from {table('pub_sightings')}
-            where {IN_RANGE.format(col='started_at')})
+            select distinct address_type, address from {table("pub_sightings")}
+            where {IN_RANGE.format(col="started_at")})
         select a.aircraft_class, count(*) as aircraft
-        from heard join {table('pub_aircraft')} a using (address_type, address)
-        where a.is_confirmed group by 1 order by 2 desc""", start=start, end=end)
-    sightings = query(f"""
-        select count(*) as sightings from {table('pub_sightings')}
-        where is_confirmed and {IN_RANGE.format(col='started_at')}""", start=start, end=end)[0]
-    listening = query(f"""
+        from heard join {table("pub_aircraft")} a using (address_type, address)
+        where a.is_confirmed group by 1 order by 2 desc""",
+        start=start,
+        end=end,
+    )
+    sightings = query(
+        f"""
+        select count(*) as sightings from {table("pub_sightings")}
+        where is_confirmed and {IN_RANGE.format(col="started_at")}""",
+        start=start,
+        end=end,
+    )[0]
+    listening = query(
+        f"""
         select round(sum(listening_seconds_1090) / 3600, 1) as hours_1090,
                round(sum(listening_seconds_978) / 3600, 1) as hours_978
-        from {table('pub_receiver_uptime_hourly')} where {IN_RANGE.format(col='hour_start')}""",
-        start=start, end=end)[0]
-    return {"start_date": start, "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
-            "times": "UTC timestamps",
-            **totals, **aircraft, **sightings, "by_class": classes, "listening_hours": listening}
+        from {table("pub_receiver_uptime_hourly")} where {IN_RANGE.format(col="hour_start")}""",
+        start=start,
+        end=end,
+    )[0]
+    return {
+        "start_date": start,
+        "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
+        "times": "UTC timestamps",
+        **totals,
+        **aircraft,
+        **sightings,
+        "by_class": classes,
+        "listening_hours": listening,
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -553,20 +664,23 @@ def callsign_activity(prefix: str, start_date: str = "", end_date: str = "") -> 
     (median track and whether climbing or descending). Use it to describe
     schedules and routes, e.g. a shuttle's daily pattern."""
     start, end = date_range(start_date, end_date)
-    rows = query(f"""
+    rows = query(
+        f"""
         with s as (
-            select * from {table('pub_sightings')}
-            where {IN_RANGE.format(col='started_at')}
+            select * from {table("pub_sightings")}
+            where {IN_RANGE.format(col="started_at")}
               and exists(select 1 from unnest(callsigns) c where starts_with(c, @prefix))),
         tracks as (
             select p.address, s.sighting_number,
                    approx_quantiles(p.track_deg, 2 ignore nulls)[safe_offset(1)] as median_track_deg,
-                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start limit 1)[safe_offset(0)] as first_alt,
-                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start desc limit 1)[safe_offset(0)] as last_alt
-            from s join {table('pub_snapshots')} p
+                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start limit 1)[safe_offset(0)]
+                       as first_alt,
+                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start desc limit 1)[safe_offset(0)]
+                       as last_alt
+            from s join {table("pub_snapshots")} p
               on p.address_type = s.address_type and p.address = s.address
              and p.bucket_start between timestamp_sub(s.started_at, interval 15 second) and s.ended_at
-            where {IN_RANGE.format(col='p.bucket_start')}
+            where {IN_RANGE.format(col="p.bucket_start")}
             group by p.address, s.sighting_number)
         select a.registration, s.address, s.callsigns, a.type_name, a.owner_name,
                format_timestamp('%F', s.started_at, 'America/Los_Angeles') as day_pt,
@@ -576,29 +690,39 @@ def callsign_activity(prefix: str, start_date: str = "", end_date: str = "") -> 
                round(t.median_track_deg) as median_track_deg,
                case when t.last_alt - t.first_alt > 500 then 'climbing'
                     when t.first_alt - t.last_alt > 500 then 'descending' else 'level' end as vertical
-        from s join {table('pub_aircraft')} a using (address_type, address)
+        from s join {table("pub_aircraft")} a using (address_type, address)
         left join tracks t on t.address = s.address and t.sighting_number = s.sighting_number
-        order by s.started_at""", start=start, end=end, prefix=prefix.strip().upper())
-    return {"prefix": prefix.strip().upper(), "start_date": start,
-            "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
-            "sightings": len(rows), "aircraft": len({r["address"] for r in rows}),
-            "note": "median_track_deg: 0 north, 90 east, 180 south, 270 west; null without positions.",
-            "rows": rows}
+        order by s.started_at""",
+        start=start,
+        end=end,
+        prefix=prefix.strip().upper(),
+    )
+    return {
+        "prefix": prefix.strip().upper(),
+        "start_date": start,
+        "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
+        "sightings": len(rows),
+        "aircraft": len({r["address"] for r in rows}),
+        "note": "median_track_deg: 0 north, 90 east, 180 south, 270 west; null without positions.",
+        "rows": rows,
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)
-def operator_fleets(start_date: str = "", end_date: str = "", min_aircraft: int = 2,
-                    limit: int = 30) -> list[dict[str, Any]]:
+def operator_fleets(
+    start_date: str = "", end_date: str = "", min_aircraft: int = 2, limit: int = 30
+) -> list[dict[str, Any]]:
     """Organizations (registered owner organization, else operator) with
     several aircraft heard in a period (Pacific dates, inclusive): how
     many aircraft, sightings and which types. Finds flight schools, charter
     and fractional fleets, airlines and government fleets. Private owners are
     never named, so their aircraft do not appear here."""
     start, end = date_range(start_date, end_date)
-    return query(f"""
+    return query(
+        f"""
         with s as (
-            select address_type, address, count(*) as sightings from {table('pub_sightings')}
-            where is_confirmed and {IN_RANGE.format(col='started_at')}
+            select address_type, address, count(*) as sightings from {table("pub_sightings")}
+            where is_confirmed and {IN_RANGE.format(col="started_at")}
             group by address_type, address)
         select coalesce(a.owner_name, a.operator) as organization,
                any_value(a.owner_category) as owner_category,
@@ -606,39 +730,50 @@ def operator_fleets(start_date: str = "", end_date: str = "", min_aircraft: int 
                array_agg(distinct a.type_name ignore nulls limit 6) as types,
                array_agg(coalesce(a.registration, a.address) order by s.sightings desc limit 8) as examples,
                countif(a.is_ladd) as ladd_listed
-        from s join {table('pub_aircraft')} a using (address_type, address)
+        from s join {table("pub_aircraft")} a using (address_type, address)
         where coalesce(a.owner_name, a.operator) is not null
         group by organization having count(*) >= @min
         order by sightings desc limit @limit""",
-        start=start, end=end, min=clamp(min_aircraft, 1, 50), limit=clamp(limit, 1, 50))
+        start=start,
+        end=end,
+        min=clamp(min_aircraft, 1, 50),
+        limit=clamp(limit, 1, 50),
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
-def busiest_areas(start_date: str = "", end_date: str = "", max_altitude_ft: int = 8000,
-                  limit: int = 10) -> list[dict[str, Any]]:
+def busiest_areas(
+    start_date: str = "", end_date: str = "", max_altitude_ft: int = 8000, limit: int = 10
+) -> list[dict[str, Any]]:
     """Where aircraft spend time at low altitude in a period (Pacific dates,
     inclusive): roughly 3 by 3 nm grid cells ranked by airborne snapshots
     below max_altitude_ft, with distinct aircraft, their circling and the
     organizations seen. Finds training areas, helicopter work and approaches."""
     start, end = date_range(start_date, end_date)
-    return query(f"""
+    return query(
+        f"""
         with p as (
             select p.*, round(p.latitude / 0.05) * 0.05 as lat_cell,
                    round(p.longitude / 0.05) * 0.05 as lon_cell
-            from {table('pub_snapshots')} p
-            where {IN_RANGE.format(col='p.bucket_start')} and p.latitude is not null
+            from {table("pub_snapshots")} p
+            where {IN_RANGE.format(col="p.bucket_start")} and p.latitude is not null
               and p.altitude_baro_ft < @max_alt and not coalesce(p.on_ground, false))
         select round(p.lat_cell, 2) as latitude, round(p.lon_cell, 2) as longitude,
                count(*) as snapshots, count(distinct p.address) as aircraft,
                round(avg(p.altitude_baro_ft)) as avg_altitude_baro_ft,
                array_agg(distinct coalesce(a.owner_name, a.operator) ignore nulls limit 5) as organizations,
                array_agg(distinct a.type_name ignore nulls limit 5) as types
-        from p left join {table('pub_aircraft')} a using (address_type, address)
+        from p left join {table("pub_aircraft")} a using (address_type, address)
         group by 1, 2 order by snapshots desc limit @limit""",
-        start=start, end=end, max_alt=clamp(max_altitude_ft, 500, 20000), limit=clamp(limit, 1, 30))
+        start=start,
+        end=end,
+        max_alt=clamp(max_altitude_ft, 500, 20000),
+        limit=clamp(limit, 1, 30),
+    )
 
 
 # ---------------------------------------------------------------- operations
+
 
 @mcp.tool(annotations=READ_ONLY)
 def receiver_status() -> dict[str, Any]:
@@ -646,17 +781,17 @@ def receiver_status() -> dict[str, Any]:
     the last 24 hours, and the latest scheduled data builds."""
     freshness = query(f"""
         select check_name, latest_status, latest_age_seconds, last_checked_at
-        from {table('pub_data_health')} where check_type = 'source'""")
+        from {table("pub_data_health")} where check_type = 'source'""")
     uptime = query(f"""
         select round(avg(uptime_ratio), 3) as avg_uptime_ratio_24h,
                countif(uptime_ratio < 0.5) as hours_mostly_down_24h,
                round(sum(listening_seconds_1090) / 3600, 1) as hours_on_1090,
                round(sum(listening_seconds_978) / 3600, 1) as hours_on_978
-        from {table('pub_receiver_uptime_hourly')}
+        from {table("pub_receiver_uptime_hourly")}
         where hour_start >= timestamp_sub(current_timestamp(), interval 24 hour)""")
     runs = query(f"""
         select mode, started_at, passed, errors, warnings
-        from {table('pub_dbt_runs')} order by started_at desc limit 5""")
+        from {table("pub_dbt_runs")} order by started_at desc limit 5""")
     return {"freshness": freshness, "uptime": uptime[0] if uptime else None, "recent_builds": runs}
 
 
@@ -667,15 +802,18 @@ def data_quality_status() -> dict[str, Any]:
     checks = query(f"""
         select check_type, check_name, latest_status, latest_failures, last_checked_at,
                failed_runs_7d, warned_runs_7d
-        from {table('pub_data_health')} order by latest_status, check_name""")
+        from {table("pub_data_health")} order by latest_status, check_name""")
     summary: dict[str, int] = {}
     for c in checks:
         summary[c["latest_status"]] = summary.get(c["latest_status"], 0) + 1
     return {"summary": summary, "not_passing": [c for c in checks if c["latest_status"] != "pass"]}
 
 
-@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False,
-                                      idempotent_hint=True, open_world_hint=False))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    )
+)
 def run_sql(sql: str, ctx: Context) -> dict[str, Any]:
     """Run a read-only BigQuery SELECT over the public views (requires the
     X-Sky-Scanner-Token header). Reference views as `public.<view>` or just
@@ -687,22 +825,36 @@ def run_sql(sql: str, ctx: Context) -> dict[str, Any]:
     refuses anything else), so private tables stay private whatever the SQL."""
     supplied = (ctx.headers or {}).get("x-sky-scanner-token", "")
     if not SQL_TOKEN or not hmac.compare_digest(supplied, SQL_TOKEN):
-        raise ToolError("run_sql needs a valid X-Sky-Scanner-Token header. Use the other tools, "
-                         "which cover most questions.")
+        raise ToolError(
+            "run_sql needs a valid X-Sky-Scanner-Token header. Use the other tools, which cover most questions."
+        )
     rate_limit()
     try:
-        dry = client().query(sql, job_config=bigquery.QueryJobConfig(
-            dry_run=True, use_query_cache=False, default_dataset=f"{PROJECT}.{DATASET}"))
+        dry = client().query(
+            sql,
+            job_config=bigquery.QueryJobConfig(
+                dry_run=True, use_query_cache=False, default_dataset=f"{PROJECT}.{DATASET}"
+            ),
+        )
         check_dry_run(dry.statement_type, dry.referenced_tables, dry.total_bytes_processed)
-        job = client().query(sql, job_config=bigquery.QueryJobConfig(
-            maximum_bytes_billed=SQL_MAX_BYTES, default_dataset=f"{PROJECT}.{DATASET}",
-            labels={"component": "mcp", "tool": "run_sql"}))
+        job = client().query(
+            sql,
+            job_config=bigquery.QueryJobConfig(
+                maximum_bytes_billed=SQL_MAX_BYTES,
+                default_dataset=f"{PROJECT}.{DATASET}",
+                labels={"component": "mcp", "tool": "run_sql"},
+            ),
+        )
         result = job.result(max_results=MAX_ROWS)
     except GoogleAPICallError as exc:
         raise ToolError(f"BigQuery rejected the query: {exc.message}") from None
     rows = [jsonable(dict(r.items())) for r in result]
-    return {"rows": rows, "row_count": len(rows), "bytes_billed": job.total_bytes_billed,
-            "truncated": (result.total_rows or 0) > MAX_ROWS}
+    return {
+        "rows": rows,
+        "row_count": len(rows),
+        "bytes_billed": job.total_bytes_billed,
+        "truncated": (result.total_rows or 0) > MAX_ROWS,
+    }
 
 
 def check_dry_run(statement_type: str, referenced_tables, bytes_processed: int | None) -> None:
@@ -718,16 +870,20 @@ def check_dry_run(statement_type: str, referenced_tables, bytes_processed: int |
     if outside:
         raise ToolError(f"Only this project's public views may be queried; not {', '.join(outside)}.")
     if (bytes_processed or 0) > SQL_MAX_BYTES:
-        raise ToolError(f"Query would scan {bytes_processed:,} bytes; the limit is "
-                         f"{SQL_MAX_BYTES:,}. Filter on bucket_start or started_at.")
+        raise ToolError(
+            f"Query would scan {bytes_processed:,} bytes; the limit is "
+            f"{SQL_MAX_BYTES:,}. Filter on bucket_start or started_at."
+        )
 
 
 # ---------------------------------------------------------------- serving
+
 
 # Cloud Run reserves /healthz for itself, so the probe uses /health.
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request):
     from starlette.responses import JSONResponse
+
     return JSONResponse({"status": "ok"})
 
 
@@ -746,8 +902,9 @@ def main() -> None:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         host="0.0.0.0",
     )
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)),
-                proxy_headers=True, forwarded_allow_ips="*")
+    uvicorn.run(
+        app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), proxy_headers=True, forwarded_allow_ips="*"
+    )
 
 
 if __name__ == "__main__":

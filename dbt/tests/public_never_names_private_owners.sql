@@ -8,10 +8,13 @@
 --    co-owned aircraft under the company name).
 -- 3. Names mentioning a trust or trustee are never shown.
 with registrations as (
-    select upper(registered_owner) as name, registrant_type
+    select
+        upper(registered_owner) as name,
+        registrant_type
     from {{ ref('stg_aircraft_metadata') }}
-    where source_name = 'faa_registry' and registered_owner is not null
-      and registrant_type is not null
+    where
+        source_name = 'faa_registry' and registered_owner is not null
+        and registrant_type is not null
 ),
 
 private_only_names as (
@@ -19,24 +22,39 @@ private_only_names as (
     -- the first co-owner, which can be an LLC. The rule targets people's names.
     select name
     from registrations
-    where not regexp_contains(name, r'\b(LLC|L L C|INC|CORP|CORPORATION|COMPANY|CO|LTD|LP|LLP|PLC|GMBH|AIRLINES?|AVIATION)\b')
+    where
+        not regexp_contains(
+            name, r'\b(LLC|L L C|INC|CORP|CORPORATION|COMPANY|CO|LTD|LP|LLP|PLC|GMBH|AIRLINES?|AVIATION)\b'
+        )
     group by name
     having logical_and(registrant_type in ('1', '2', '4', '9'))
 )
 
-select p.address, p.owner_name, a.faa_registrant_type, 'aircraft registered privately' as reason
+select
+    p.address,
+    p.owner_name,
+    a.faa_registrant_type,
+    'aircraft registered privately' as reason
 from {{ ref('pub_aircraft') }} as p
 inner join {{ ref('dim_aircraft') }} as a using (address_type, address)
 where p.owner_name is not null and a.faa_registrant_type in ('1', '2', '4', '9')
 
 union all
 
-select address, owner_name, null, 'name only ever registered privately'
+select
+    address,
+    owner_name,
+    null as faa_registrant_type,
+    'name only ever registered privately' as reason
 from {{ ref('pub_aircraft') }}
-where upper(owner_name) in (select name from private_only_names)
+where upper(owner_name) in (select n.name from private_only_names as n)
 
 union all
 
-select address, owner_name, null, 'trust'
+select
+    address,
+    owner_name,
+    null as faa_registrant_type,
+    'trust' as reason
 from {{ ref('pub_aircraft') }}
 where regexp_contains(upper(owner_name), r'\bTRUST(EE)?S?\b')

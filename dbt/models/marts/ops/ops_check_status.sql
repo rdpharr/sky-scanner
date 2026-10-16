@@ -6,9 +6,10 @@
 with results as (
     select *
     from {{ source('ops', 'dbt_node_results') }}
-    where finished_at >= timestamp_sub(current_timestamp(), interval 7 day)
-      and resource_type in ('test', 'source')
-      and invocation_id in (select invocation_id from {{ ref('ops_dbt_runs') }})
+    where
+        finished_at >= timestamp_sub(current_timestamp(), interval 7 day)
+        and resource_type in ('test', 'source')
+        and invocation_id in (select r.invocation_id from {{ ref('ops_dbt_runs') }} as r)
 )
 
 select
