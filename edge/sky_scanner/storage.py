@@ -46,14 +46,14 @@ DO NOTHING
 
 _METADATA_COLUMNS = ("address_type, address, registration, manufacturer, model, "
                      "aircraft_type, registered_owner, operator, icao_type_code, "
-                     "operator_icao, country, category, tags")
+                     "operator_icao, country, category, tags, registrant_type, year_mfr")
 
 _METADATA_STAGE_CREATE = """
 CREATE TEMP TABLE sky_metadata_stage (
  address_type text NOT NULL, address text NOT NULL, registration text,
  manufacturer text, model text, aircraft_type text, registered_owner text,
  operator text, icao_type_code text, operator_icao text, country text,
- category text, tags text
+ category text, tags text, registrant_type text, year_mfr integer
 ) ON COMMIT DROP
 """
 
@@ -62,10 +62,12 @@ _METADATA_INSERT_CHANGED = """
 INSERT INTO aircraft_metadata
  (address_type, address, registration, manufacturer, model, aircraft_type,
   registered_owner, operator, icao_type_code, operator_icao, country, category, tags,
+  registrant_type, year_mfr,
   registry_status, source_name, source_url, retrieved_at, dataset_hash, import_id)
 SELECT s.address_type, s.address, s.registration, s.manufacturer, s.model,
        s.aircraft_type, s.registered_owner, s.operator, s.icao_type_code,
-       s.operator_icao, s.country, s.category, s.tags, 'present', %(source_name)s,
+       s.operator_icao, s.country, s.category, s.tags, s.registrant_type, s.year_mfr,
+       'present', %(source_name)s,
        %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
 FROM (SELECT DISTINCT ON (address_type, address) * FROM sky_metadata_stage
       ORDER BY address_type, address) AS s
@@ -83,7 +85,28 @@ WHERE latest.id IS NULL OR latest.registry_status <> 'present'
       (s.registration, s.manufacturer, s.model, s.aircraft_type,
        s.registered_owner, s.operator, s.icao_type_code, s.operator_icao, s.country,
        s.category, s.tags)
+   -- Fields added later are null on older versions: unknown, not a change.
+   OR (latest.registrant_type IS NOT NULL
+       AND latest.registrant_type IS DISTINCT FROM s.registrant_type)
+   OR (latest.year_mfr IS NOT NULL AND latest.year_mfr IS DISTINCT FROM s.year_mfr)
 ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
+"""
+
+# Fill fields added after a version was written (registrant type, year of
+# manufacture) into each aircraft's latest version in place. Filling an
+# unknown value is not a change, so no new version is created.
+_METADATA_FILL_ADDED_FIELDS = """
+UPDATE aircraft_metadata AS m
+SET registrant_type = s.registrant_type, year_mfr = s.year_mfr
+FROM sky_metadata_stage AS s
+WHERE m.source_name = %(source_name)s AND m.registry_status = 'present'
+  AND m.address_type = s.address_type AND m.address = s.address
+  AND m.registrant_type IS NULL AND m.year_mfr IS NULL
+  AND (s.registrant_type IS NOT NULL OR s.year_mfr IS NOT NULL)
+  AND m.id = (SELECT latest.id FROM aircraft_metadata AS latest
+              WHERE latest.source_name = m.source_name
+                AND latest.address_type = m.address_type AND latest.address = m.address
+              ORDER BY latest.retrieved_at DESC, latest.id DESC LIMIT 1)
 """
 
 # Previously present aircraft that this dataset no longer lists.
@@ -173,7 +196,8 @@ class PostgresStorage:
             (id, receiver_id, frequency_hz, started_at, ended_at, decoder_version, sample_config)
             VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (id) DO UPDATE SET ended_at=EXCLUDED.ended_at,
-            decoder_version=EXCLUDED.decoder_version, sample_config=EXCLUDED.sample_config"""
+            decoder_version=EXCLUDED.decoder_version, sample_config=EXCLUDED.sample_config,
+            written_at=clock_timestamp()"""
         params = (
             interval_id, interval["receiver_id"], int(interval["frequency_hz"]),
             _utc(interval["started_at"]),
@@ -242,7 +266,7 @@ class PostgresStorage:
             if row:
                 import_id = row[0]
             cursor.execute(_METADATA_STAGE_CREATE)
-            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES ({', '.join(['%s'] * 15)})"
             for offset in range(0, len(records), batch_size):
                 chunk = records[offset:offset + batch_size]
                 values = [(
@@ -253,12 +277,14 @@ class PostgresStorage:
                     record.get("registered_owner"), record.get("operator"),
                     record.get("icao_type_code"), record.get("operator_icao"),
                     record.get("country"), record.get("category"), record.get("tags"),
+                    record.get("registrant_type"), record.get("year_mfr"),
                 ) for record in chunk]
                 if values:
                     cursor.executemany(stage_sql, values)
             cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
             params = {"source_name": source_name, "source_url": source_url, "retrieved_at": retrieved,
                       "dataset_hash": dataset_hash, "import_id": import_id}
+            cursor.execute(_METADATA_FILL_ADDED_FIELDS, params)
             cursor.execute(_METADATA_INSERT_CHANGED, params)
             changed = max(0, int(cursor.rowcount or 0))
             if not partial:

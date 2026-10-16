@@ -68,6 +68,20 @@ services:
     depends_on:
       db: {condition: service_healthy}
     command: ["python", "-m", "sky_scanner.enrich_worker"]
+  replicator:
+    <<: *app
+    environment:
+      # Read-only role: replication never writes to the edge database.
+      REPLICATOR_DATABASE_URL: postgresql://explorer:${EXPLORER_PASSWORD}@db/sky_scanner?sslmode=require
+      BQ_PROJECT: ${BQ_PROJECT:-sky-scanner-pharr}
+      BQ_DATASET: raw
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-edge.json
+    volumes:
+      # Key for sky-edge, which can only write the BigQuery raw dataset.
+      - ./secrets/gcp-edge.json:/run/secrets/gcp-edge.json:ro
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["python", "-m", "sky_scanner.replicator"]
   web:
     <<: *app
     environment:

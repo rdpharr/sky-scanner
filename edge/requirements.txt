@@ -1,1 +1,2 @@
 psycopg[binary]==3.2.10
+google-cloud-bigquery==3.46.2

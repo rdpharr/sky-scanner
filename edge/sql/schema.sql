@@ -112,10 +112,34 @@ ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS operator_icao text;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS country text;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS category text;
 ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS tags text;
+-- FAA registrant type code and year of manufacture (added 2026-10-15; null
+-- on versions written earlier, filled into latest versions on next import).
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS registrant_type text;
+ALTER TABLE aircraft_metadata ADD COLUMN IF NOT EXISTS year_mfr integer;
 CREATE INDEX IF NOT EXISTS aircraft_metadata_source_lookup_idx
     ON aircraft_metadata (source_name, address_type, address, retrieved_at DESC);
 CREATE INDEX IF NOT EXISTS aircraft_metadata_lookup_idx
     ON aircraft_metadata (address_type, address, retrieved_at DESC);
+
+-- Replication watermark for the BigQuery replicator: when each row was last
+-- written here. Existing rows take the migration time; later writes take the
+-- write time. Rows written late (e.g. retried after an outage) are still found.
+ALTER TABLE aircraft_snapshots ADD COLUMN IF NOT EXISTS written_at timestamptz
+    NOT NULL DEFAULT now();
+ALTER TABLE aircraft_snapshots ALTER COLUMN written_at SET DEFAULT clock_timestamp();
+CREATE INDEX IF NOT EXISTS aircraft_snapshots_written_at_idx
+    ON aircraft_snapshots (written_at);
+ALTER TABLE capture_intervals ADD COLUMN IF NOT EXISTS written_at timestamptz
+    NOT NULL DEFAULT now();
+ALTER TABLE capture_intervals ALTER COLUMN written_at SET DEFAULT clock_timestamp();
+CREATE INDEX IF NOT EXISTS capture_intervals_written_at_idx
+    ON capture_intervals (written_at);
+
+-- Views expanding s.* are dropped first: CREATE OR REPLACE cannot insert the
+-- table's newer columns ahead of the view's own.
+DROP VIEW IF EXISTS latest_aircraft;
+DROP VIEW IF EXISTS enriched_snapshots;
+DROP VIEW IF EXISTS enriched_snapshots_current;
 
 CREATE OR REPLACE VIEW latest_aircraft AS
 SELECT DISTINCT ON (receiver_id, address_type, address, frequency_hz)

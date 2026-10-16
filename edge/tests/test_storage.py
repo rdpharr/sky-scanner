@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from sky_scanner.storage import (
     PostgresStorage,
+    _METADATA_FILL_ADDED_FIELDS,
     _METADATA_INSERT_ABSENT,
     _METADATA_INSERT_CHANGED,
 )
@@ -173,16 +174,17 @@ class StorageTests(unittest.TestCase):
             "manufacturer": "ACME", "model": "1", "aircraft_type": "4",
             "registered_owner": "Owner", "operator": None,
             "icao_type_code": "B77W", "operator_icao": "KAL", "country": "US",
+            "registrant_type": "3", "year_mfr": 2004,
             "source_url": "https://example.test/data", "retrieved_at": "2026-01-01T00:00:00Z",
             "dataset_hash": "sha256",
         }]
         with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
             self.storage.save_metadata_import(records, batch_size=1)
         stage_rows = self.cursor.executemany.call_args_list[0].args[1]
-        self.assertEqual(len(stage_rows[0]), 13)
+        self.assertEqual(len(stage_rows[0]), 15)
         self.assertEqual(stage_rows[0], (
             "icao", "ABC123", "N1", "ACME", "1", "4", "Owner", None,
-            "B77W", "KAL", "US", None, None,
+            "B77W", "KAL", "US", None, None, "3", 2004,
         ))
         insert_import_params = self.cursor.execute.call_args_list[0].args[1]
         self.assertEqual(insert_import_params[-1], "faa_registry")
@@ -207,7 +209,7 @@ class StorageTests(unittest.TestCase):
         stage_rows = self.cursor.executemany.call_args_list[0].args[1]
         self.assertEqual(stage_rows[0], (
             "icao", "abc123", None, None, None, None, "Korean Air", "Korean Air",
-            "B77W", "KAL", "Republic of Korea", None, None,
+            "B77W", "KAL", "Republic of Korea", None, None, None, None,
         ))
         calls_by_sql = {c.args[0]: c.args[1] for c in self.cursor.execute.call_args_list
                         if len(c.args) > 1 and isinstance(c.args[1], dict)}
@@ -215,6 +217,24 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT]["source_name"], "opensky")
         self.assertIn("m.source_name = %(source_name)s", _METADATA_INSERT_CHANGED)
         self.assertIn("WHERE source_name = %(source_name)s", _METADATA_INSERT_ABSENT)
+
+    def test_added_fields_are_filled_in_place_before_change_detection(self):
+        self.cursor.fetchone.return_value = None
+        records = [{"icao_address": "ABC123", "registration": "N1", "registrant_type": "1",
+                    "year_mfr": 1975, "source_url": "u", "retrieved_at": "2026-01-01T00:00:00Z",
+                    "dataset_hash": "h"}]
+        self.storage.save_metadata_import(records, batch_size=1)
+        sqls = [c.args[0] for c in self.cursor.execute.call_args_list]
+        self.assertLess(sqls.index(_METADATA_FILL_ADDED_FIELDS),
+                        sqls.index(_METADATA_INSERT_CHANGED))
+        # Only unknown values are filled, and only on each aircraft's latest version.
+        self.assertIn("m.registrant_type IS NULL AND m.year_mfr IS NULL",
+                      _METADATA_FILL_ADDED_FIELDS)
+        self.assertIn("ORDER BY latest.retrieved_at DESC, latest.id DESC LIMIT 1",
+                      _METADATA_FILL_ADDED_FIELDS)
+        # A null added field on the latest version is unknown, not a change.
+        self.assertIn("latest.registrant_type IS NOT NULL", _METADATA_INSERT_CHANGED)
+        self.assertIn("latest.year_mfr IS NOT NULL", _METADATA_INSERT_CHANGED)
 
     def test_same_source_hash_reimport_does_not_create_new_metadata_version(self):
         records = [{

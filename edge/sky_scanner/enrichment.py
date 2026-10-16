@@ -185,6 +185,10 @@ def parse_faa_registry(
             continue
         code = _col(row, master_headers, ("MFR MDL CODE", "AIRCRAFT MFR MODEL CODE", "AIRCRAFT MANUFACTURER MODEL CODE"), 2)
         owner = _optional(_col(row, master_headers, ("NAME", "REGISTRANT NAME", "REGISTRANT'S NAME", "OWNER"), 6))
+        # FAA codes: 1 individual, 2 partnership, 3 corporation, 4 co-owned,
+        # 5 government, 7 LLC, 8 non-citizen corporation, 9 non-citizen co-owned.
+        registrant = _col(row, master_headers, ("TYPE REGISTRANT", "REGISTRANT TYPE"), 5)
+        year = _col(row, master_headers, ("YEAR MFR", "YEAR MANUFACTURED"), 4)
         metadata = references.get(code, {})
         results.append({
             "icao_address": icao,
@@ -193,6 +197,8 @@ def parse_faa_registry(
             "model": metadata.get("model"),
             "aircraft_type": metadata.get("aircraft_type"),
             "registered_owner": owner,
+            "registrant_type": registrant if re.fullmatch(r"[1-9]", registrant) else None,
+            "year_mfr": int(year) if re.fullmatch(r"(19|20)\d\d", year) else None,
             "operator": None,
             "source_url": source_url,
             "retrieved_at": retrieved_text,

@@ -25,6 +25,7 @@ gcloud services enable --project="$PROJECT_ID" \
     bigquery.googleapis.com \
     bigquerystorage.googleapis.com \
     billingbudgets.googleapis.com \
+    cloudquotas.googleapis.com \
     cloudresourcemanager.googleapis.com \
     cloudscheduler.googleapis.com \
     iam.googleapis.com \

@@ -61,6 +61,18 @@ class EnrichmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["manufacturer"], "Cessna")
         self.assertEqual(rows[0]["model"], "172S")
         self.assertEqual(rows[0]["aircraft_type"], "4")
+        self.assertEqual(rows[0]["registrant_type"], "1")
+        self.assertEqual(rows[0]["year_mfr"], 1975)
+
+    def test_invalid_registrant_type_and_year_are_dropped(self):
+        master = (
+            'N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,MODE S CODE HEX,\n'
+            '12345,serial,0000001,00000,    ,X,Owner Name,00a123,\n'
+        )
+        acftref = 'CODE,MFR,MODEL,TYPE-ACFT,TYPE-ENG,AC-CAT\n0000001,Cessna,172S,4,1,1\n'
+        row = parse_faa_registry(make_zip(master, acftref))[0]
+        self.assertIsNone(row["registrant_type"])
+        self.assertIsNone(row["year_mfr"])
 
     def test_malformed_detected_headers_raise_and_long_n_number_is_rejected(self):
         malformed_master = 'N-NUMBER,MFR MDL CODE,NAME\n12345,0000001,Owner\n'

@@ -368,31 +368,47 @@ doesn't hold up becomes a fix before the phase closes.
 - Home pipeline moved into `edge/`; Compose stack recreated with the same
   Postgres volume.
 - Terraform core applied: datasets, service accounts and permissions,
-  GitHub sign-in, Artifact Registry, OpenRouter secret, email channel.
-  The per-account query quota is pending one more `terraform apply`.
+  GitHub sign-in, Artifact Registry, OpenRouter secret, email channel and
+  a 100 GiB per-account daily query quota (granted).
 - Notable-scoring prototype on Postgres (findings in §4.8).
 
 **Demo (done):** the prototype's real results. Rare types surfaced the
 VC-25A 92-9000, an F/A-18F and a K-MAX (LADD-flagged, so excluded from
 public). Raw circling turned out to be dominated by flight schools.
 
-### Phase 1: Data lands in BigQuery
-- `replicator.py` and its Compose service (snapshots, capture intervals and
-  receivers every ~30 s; metadata and reference tables daily).
+### Phase 1: Data lands in BigQuery — done (2026-10-16)
+- `replicator.py` and its Compose service: snapshots and capture intervals
+  streamed every 30 s by `written_at`; metadata and reference tables
+  reloaded daily; `receivers.location` never replicated.
 - Key for `sky-edge` created locally into `edge/secrets/`, never in
   Terraform state.
-- Full history backfilled from Postgres (Parquet → BigQuery load job).
-- FAA `type_registrant` and `year_mfr` added to the edge importer.
+- Full history backfilled by load job on first start (NDJSON, not Parquet).
+- FAA `registrant_type` and `year_mfr` added to the edge importer. Existing
+  rows are filled at the next FAA publication. A dry run on the live table
+  filled all 317,604 current FAA aircraft and created 0 new versions.
 
-**Demo:**
-- Postgres vs BigQuery row counts per table, side by side.
-- Age of the newest BigQuery row in seconds, run twice a minute apart to
-  show live arrival.
-- Real queries: aircraft heard in the last 10 minutes; this week's VC-25A
-  sighting; busiest hours by band.
-- Bytes billed for each query, to show what queries cost.
+**Demo results (live):**
+- Row counts: all six reference tables match Postgres exactly
+  (`aircraft_metadata` 922,452). The streamed tables trailed by 1 snapshot
+  and 2 intervals written seconds earlier. No duplicate keys.
+- Freshness: newest capture interval **0 s behind Postgres** at steady
+  state.
+- Real queries: aircraft in the last 3 hours; the VC-25A 92-9000 heard
+  Wed Oct 14 19:38 PT at 6,375–6,775 ft (3 snapshots); busiest local hours
+  are 08:00–13:00 PT (~9,800 messages a day at 09:00); 978 MHz saw at most
+  3 aircraft in any hour.
+- Cost: small queries bill the 10 MB minimum. Joining raw
+  `aircraft_metadata` billed 44 MB, so dbt's current-identity dimension
+  needs to stay small.
 
-**Done when:** counts match, and live rows arrive within a minute.
+**Fixed during the demo:**
+- Backfilled rows inside the 2-minute overlap were re-streamed, because a
+  schema migration stamped every existing row with one `written_at`. The
+  backfill now records them as sent.
+- A streaming error restarted everything, reloading 922k metadata rows.
+  Failed tables are now retried on the next poll, with a full restart only
+  after 5 failing polls. The trigger was BigQuery's streaming endpoint
+  reporting "not found" for a few minutes after a table was recreated.
 
 ### Phase 2: dbt models and canonical definitions
 - dbt project: staging (removing duplicates), the registry history in
