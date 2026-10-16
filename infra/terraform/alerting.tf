@@ -112,8 +112,9 @@ resource "google_monitoring_alert_policy" "job_failed" {
   documentation {
     mime_type = "text/markdown"
     content   = <<-EOT
-      A Cloud Run job execution failed: dbt could not run at all (bad
-      credentials, a broken image, a timeout). Check the execution's logs.
+      A Cloud Run job execution failed: a dbt job could not run dbt at all
+      (bad credentials, a broken image, a timeout), or the notable-edition
+      job errored or rejected its edition. Check the execution's logs.
       Runbook: ${local.runbook}
     EOT
   }

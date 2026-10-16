@@ -15,8 +15,9 @@ definitions, and data-quality checks email the operator when something breaks.
 
 ## What it shows
 
-**One definition per number.** Every metric on the site is defined once in
-dbt, tested on every build and exported with its description. The website's
+**One definition per number.** The core measures (a confirmed aircraft, a
+sighting, military, identified, listening time) are defined once in dbt,
+tested on every build and exported with their descriptions. The website's
 Definitions page and the MCP server's `get_definitions` tool serve the same
 text, so a person and an agent asking "how many aircraft were heard?" get
 the same answer.
@@ -28,9 +29,11 @@ the Data health page.
 
 **Permissions enforced by the warehouse.** The website, the MCP server and the
 agent each run as their own service account, and each can read only the
-`public` dataset: authorized views over the marts. Private owners are never
-named, and aircraft on the FAA's LADD list or using privacy addresses are
-flagged. Tests fail the build if a private owner's name reaches a public view.
+`public` dataset, made of authorized views (the agent also writes its
+editions to `ai`). Private owners are never named, and aircraft on the FAA's
+LADD list or using privacy addresses are flagged. A dbt test checks on every
+build that no private owner's name reaches a public view, and emails an
+alert if one does.
 
 **AI access with evals.** The MCP server exposes 19 tools over the public
 views and serves the dbt definitions and column docs, so agents work from
@@ -80,20 +83,23 @@ HackRF ─▶ receiver ─▶ ingest ─▶ Postgres ◀─ enrichment (FAA, tar
 | [services/web/](services/web/) | The Streamlit website |
 | [services/mcp/](services/mcp/) | The MCP server (Streamable HTTP on Cloud Run, or stdio locally) |
 | [jobs/notable/](jobs/notable/) | The weekly agent, its verifier and its evals |
-| [infra/](infra/) | Bootstrap script, access-tier check and Terraform for every cloud resource |
-| [docs/](docs/runbook.md) | The runbook: alerts and what to do, deploying, recovery, cost guardrails, drill log |
+| [infra/](infra/) | Bootstrap script (project, APIs, budget, Terraform state bucket), access-tier check, and Terraform for everything else in Google Cloud |
+| [docs/](docs/) | The [runbook](docs/runbook.md) (alerts and what to do, deploying, recovery, cost guardrails, drill log) and the README's screenshots |
 
 ## Running it
 
-Each component has its own `requirements.txt` and tests
+The Python components (`edge/`, `services/web/`, `services/mcp/`,
+`jobs/notable/`) each have their own `requirements.txt` and tests
 (`python -m unittest discover -s tests`). Linting is shared: `ruff` for
 Python (`pyproject.toml`), `sqlfluff` for the dbt SQL (`dbt/.sqlfluff`) and
 `terraform fmt`, pinned in `requirements-lint.txt` and run in CI with the
 tests.
 
 - **Edge:** see [edge/README.md](edge/README.md).
-- **dbt:** `dbt build --profiles-dir .` from `dbt/` with Google credentials;
-  the `dev` target writes to `dev_analytics` and `dev_public`.
+- **dbt:** install `dbt-core==1.12.6 dbt-bigquery==1.12.1` (the versions in
+  `jobs/dbt_runner/Dockerfile`), then from `dbt/`, with Google credentials:
+  `dbt deps` and `dbt build --profiles-dir .`. The default `dev` target
+  writes to `dev_analytics` and `dev_public`.
 - **Website:** `streamlit run app.py` from `services/web/`
   (`PUBLIC_DATASET=dev_public` to read dev).
 - **MCP server:** `python server.py` from `services/mcp/` speaks stdio, for a

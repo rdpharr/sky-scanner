@@ -24,25 +24,30 @@ R=us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner   # Artifact Registry
 | Notable edition | Cloud Run job `notable-edition` | Mondays 06:00 Pacific | `sky-notable` (reads `public`, writes `ai`) | Notable page; `gcloud run jobs executions list --job notable-edition --region us-central1` |
 
 Cloud Scheduler starts the jobs as `sky-scheduler`, which may only invoke them.
-Every cloud resource is in Terraform (`infra/terraform/`); the owner runs
-`terraform apply`. Cloud Run ignores image drift in Terraform, so images are
+The project, its APIs, the budget and the Terraform state bucket come from
+`infra/bootstrap.sh`; everything else in Google Cloud is in Terraform
+(`infra/terraform/`), and the owner runs `terraform apply`. DNS records are
+in Cloudflare. Terraform ignores Cloud Run image changes, so images are
 rolled out with `gcloud` (see [Deploying](#deploying)).
 
 ## Alerts
 
 All alerts email the operator (rdpharr@gmail.com; Gmail files them under
-Updates). dbt warnings are never emailed: they appear on the Data health
-page and are expected from time to time.
+Updates) with a link to this runbook. The headings below are the alert
+policies' names; each section gives the email's subject. dbt warnings are
+never emailed: they appear on the Data health page and are expected from
+time to time.
 
 ### Sky Scanner: data stopped arriving (critical)
 
-A source is past its freshness limit. The email names the table.
+Email subject: "Sky Scanner: no new `<table>` data". A source is past its
+freshness limit.
 
 | Source | Warning | Alert | Silence usually means |
 |---|---|---|---|
-| `raw.capture_intervals` | 5 min | 15 min | The receiver process or the replicator is down |
-| `raw.aircraft_snapshots` | 20 min | 60 min | The radio is not decoding (antenna, PortaPack, HackRF) |
-| `raw.aircraft_metadata` | 26 h | 50 h | The enrichment worker or the daily reload stopped |
+| `raw.capture_intervals` | 5 min | 15 min | The receiver process, the edge database or the replicator is down |
+| `raw.aircraft_snapshots` | 20 min | 60 min | The radio is listening but decoding nothing (antenna, PortaPack, HackRF) |
+| `raw.aircraft_metadata` | 26 h | 50 h | The replicator's daily reload failed (freshness is measured on `_replicated_at`) |
 
 1. At home, in `edge/`: `docker compose ps`. Every service should be up.
 2. If `capture_intervals` is stale: `docker compose logs --since 30m receiver
@@ -54,15 +59,18 @@ A source is past its freshness limit. The email names the table.
    nothing is decoded: check the PortaPack is in **HackRF mode** (it can
    reset after power loss), the USB cable and the antenna, then
    `docker compose restart receiver`.
-4. If the computer slept or rebooted, `docker compose up -d`.
-5. Confirm recovery: the next `dbt-freshness` run (within 15 minutes) shows
+4. If only `aircraft_metadata` is stale, the replicator is streaming but its
+   daily reload failed: look for the error in
+   `docker compose logs --since 26h replicator`.
+5. If the computer slept or rebooted, `docker compose up -d`.
+6. Confirm recovery: the next `dbt-freshness` run (within 15 minutes) shows
    no errors on the Data health page, and the policy closes itself after
    30 minutes.
 
 ### Sky Scanner: data quality check failed
 
-A dbt test or model failed in a scheduled build. The email and the Data
-health page name the check.
+Email subject: "Sky Scanner: data check `<check>` `<status>`". A dbt test or
+model failed in a scheduled build.
 
 1. See the failure: Data health → Tests, or
    ```sh
@@ -82,8 +90,10 @@ health page name the check.
 
 ### Sky Scanner: scheduled job failed
 
-A Cloud Run job execution failed: the dbt runner could not run dbt at all,
-or the notable job errored or rejected its edition.
+Email subject: the policy name. A Cloud Run job execution failed: the dbt
+runner could not run dbt at all, or the notable job errored or rejected its
+edition. (A failing dbt test does not fail the job; it sends the data check
+email instead.)
 
 1. `gcloud run jobs executions list --job <job> --region us-central1 --limit 3`
 2. Logs: `gcloud logging read 'resource.type="cloud_run_job" AND
@@ -104,8 +114,8 @@ or the notable job errored or rejected its edition.
 
 ### Sky Scanner: freshness checks stopped running
 
-No successful `dbt-freshness` run for an hour, so the "data stopped
-arriving" alert cannot fire either.
+Email subject: the policy name. No successful `dbt-freshness` run for an
+hour, so the "data stopped arriving" alert cannot fire either.
 
 1. `gcloud scheduler jobs describe dbt-freshness --location us-central1`:
    is it paused or failing to invoke?
@@ -143,7 +153,8 @@ After a deploy, update the matching `*_image` default in
 same image. After a dbt change, run `dbt-hourly` once and check Data health.
 
 Edge changes deploy at home: `docker compose build ingest && docker compose
-up -d` in `edge/` (all edge services share the image).
+up -d` in `edge/`. The receiver, ingest, enrichment and replicator services
+share that image; the database runs the stock PostGIS image.
 
 **Terraform:** `terraform plan` from `infra/terraform/`, review, then the
 owner runs `terraform apply`. State is in `gs://sky-scanner-pharr-tfstate`.
@@ -249,8 +260,9 @@ get its certificate.
 - BigQuery query quota of 100 GiB per user per day (Terraform).
 - Byte caps per query: dbt 2 GB, website 500 MB, MCP `run_sql` 1 GB (dry run
   first).
-- Measured: about 610 GB of queries a month, within the 1 TB free tier;
-  most of it is the 10 MB minimum per test. Notable editions cost about
+- Measured when scheduling started (2026-10-16): about 610 GB of queries a
+  month, within the 1 TB free tier; most of it is the 10 MB minimum per
+  test. It grows with history, since several models rebuild in full. Notable editions cost about
   $0.25 each in OpenRouter credit.
 
 ## Drill log
