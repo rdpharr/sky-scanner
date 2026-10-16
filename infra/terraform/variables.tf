@@ -34,13 +34,13 @@ variable "query_quota_mib_per_user_per_day" {
 variable "dbt_runner_image" {
   description = "Image for the first deploy of the dbt jobs. Later images are deployed by CI; Terraform ignores the difference."
   type        = string
-  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/dbt-runner:phase3-1792112448"
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/dbt-runner:phase7d-1792188145"
 }
 
 variable "web_image" {
   description = "Image for the first deploy of the website. Later images are deployed by CI."
   type        = string
-  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/web:phase4-1792118058"
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/web:final-1792189961"
 }
 
 variable "web_domain" {
@@ -58,7 +58,7 @@ variable "owner_email" {
 variable "mcp_image" {
   description = "Image for the first deploy of the MCP server. Later images are deployed by CI."
   type        = string
-  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/mcp:phase5-1792163270"
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/mcp:phase7d-1792188756"
 }
 
 variable "mcp_domain" {

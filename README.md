@@ -81,7 +81,7 @@ HackRF ─▶ receiver ─▶ ingest ─▶ Postgres ◀─ enrichment (FAA, tar
 | [services/mcp/](services/mcp/) | The MCP server (Streamable HTTP on Cloud Run, or stdio locally) |
 | [jobs/notable/](jobs/notable/) | The weekly agent, its verifier and its evals |
 | [infra/](infra/) | Bootstrap script, access-tier check and Terraform for every cloud resource |
-| [docs/](docs/PLAN.md) | The build plan, with decisions and results for each phase |
+| [docs/](docs/runbook.md) | The runbook: alerts and what to do, deploying, recovery, cost guardrails, drill log |
 
 ## Running it
 

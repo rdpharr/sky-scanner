@@ -1,4 +1,4 @@
-# Datasets follow the access tiers in docs/PLAN.md §4.2 and §4.5:
+# Datasets are the access tiers (see docs/runbook.md for who runs as what):
 #   raw        replicated edge tables, written only by the edge replicator
 #   analytics  dbt staging/intermediate/marts; never readable by public services
 #   ai         notable-aircraft editions and eval results, written by the notable job
@@ -8,7 +8,7 @@ locals {
     raw       = "Tables replicated from the home receiver's Postgres, unmodified."
     analytics = "dbt staging, intermediate and mart models. Not readable by public services."
     ai        = "Notable-aircraft editions, agent traces and evaluation results."
-    public    = "Views exposed to the website, MCP server and agent. LADD/PIA aircraft and private owners' names removed."
+    public    = "Views exposed to the website, MCP server and agent. Private owners' names removed; LADD/PIA aircraft flagged."
   }
 }
 
