@@ -91,3 +91,5 @@ models:
         description: "ICAO description code: aircraft kind (L land, S sea, A amphibian, H helicopter, G gyrocopter, T tiltrotor), engine count, engine type (J jet, T turboprop, P piston, E electric)."
       - name: wake_category
         description: ICAO wake turbulence category (L, M, H, J).
+  - name: stg_doc8643_type_rows
+    description: Every ICAO Doc 8643 row, including several manufacturer names per designator; dim_aircraft picks the one matching the aircraft's manufacturer.

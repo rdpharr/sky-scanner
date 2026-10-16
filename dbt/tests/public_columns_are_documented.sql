@@ -1,5 +1,8 @@
+{{ config(severity='warn') }}
 -- Agents read column descriptions straight from BigQuery, so every column of
--- every public view must carry one (persist_docs writes them on build).
+-- every public view must carry one (persist_docs writes them on build). A
+-- warning, not an error: BigQuery's INFORMATION_SCHEMA can lag a rebuilt
+-- view's descriptions by seconds, which would otherwise send false alerts.
 -- Runs after the public views it checks:
 {% for m in ['pub_aircraft', 'pub_snapshots', 'pub_live_snapshots', 'pub_sightings',
              'pub_aircraft_types', 'pub_daily_traffic', 'pub_receiver_uptime_hourly',

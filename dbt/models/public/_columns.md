@@ -80,6 +80,10 @@ Every distinct callsign broadcast (in this row's scope).
 Callsign family word, e.g. TALON from TALON95.
 {% enddocs %}
 
+{% docs col_candidates_of_type %}
+Number of this week's candidates of the same type.
+{% enddocs %}
+
 {% docs col_check_name %}
 Name of the test, or source table for freshness checks (e.g. raw.capture_intervals).
 {% enddocs %}
@@ -96,8 +100,16 @@ path_nm / displacement_nm, when displacement exceeds 0.5 nm. Near 1 is a straigh
 Closest the sighting came to a local airport, nautical miles.
 {% enddocs %}
 
+{% docs col_completion_tokens %}
+Completion tokens billed by OpenRouter.
+{% enddocs %}
+
 {% docs col_confirmed_aircraft %}
 Distinct confirmed aircraft heard that day on the band.
+{% enddocs %}
+
+{% docs col_cost_usd %}
+OpenRouter cost of the edition, US dollars.
 {% enddocs %}
 
 {% docs col_country %}
@@ -124,6 +136,10 @@ Messages received that day on the band.
 Calendar day in Pacific time (America/Los_Angeles).
 {% enddocs %}
 
+{% docs col_days_seen_7d %}
+Pacific-time days with at least one sighting in the last 7 days.
+{% enddocs %}
+
 {% docs col_dbt_runs__started_at %}
 When the run started (UTC).
 {% enddocs %}
@@ -140,6 +156,10 @@ Canonical definition.
 ICAO Doc 8643 type designator, e.g. B738. FAA model text is mapped first, then tar1090-db, OpenSky, plane-alert-db. Null when unknown.
 {% enddocs %}
 
+{% docs col_details %}
+Per question (answer, gold value, pass, tool calls, cost) or per reference item (found or missing).
+{% enddocs %}
+
 {% docs col_displacement_nm %}
 Straight-line distance between the sighting's first and last positions, nautical miles.
 {% enddocs %}
@@ -154,6 +174,22 @@ Minutes from first to last reception in the sighting.
 
 {% docs col_duration_seconds %}
 Seconds dbt took.
+{% enddocs %}
+
+{% docs col_edition %}
+The verified edition: title, summary, sections with entries, privacy and caveats. Every statement carries the evidence (tool call, path, value) it was verified against.
+{% enddocs %}
+
+{% docs col_edition_id %}
+Unique id of the generated edition.
+{% enddocs %}
+
+{% docs col_emergency_code_7d %}
+True when the aircraft squawked 7500, 7600 or 7700 in the last 7 days.
+{% enddocs %}
+
+{% docs col_emergency_score %}
+1.0 when the aircraft squawked an emergency code in the last 7 days.
 {% enddocs %}
 
 {% docs col_emergency_squawk %}
@@ -174,6 +210,26 @@ Engine type per Doc 8643 (Jet, Turboprop/Turboshaft, Piston, Electric).
 
 {% docs col_errors %}
 Nodes that failed or errored.
+{% enddocs %}
+
+{% docs col_eval_runs__cost_usd %}
+OpenRouter cost of the run (for edition_recall, of the edition evaluated), US dollars.
+{% enddocs %}
+
+{% docs col_eval_runs__kind %}
+qa (factual questions graded against gold SQL) or edition_recall (reference items an edition covered).
+{% enddocs %}
+
+{% docs col_eval_runs__model %}
+OpenRouter model evaluated.
+{% enddocs %}
+
+{% docs col_eval_runs__seconds %}
+Wall-clock seconds the run took.
+{% enddocs %}
+
+{% docs col_eval_runs__started_at %}
+When the evaluation ran (UTC).
 {% enddocs %}
 
 {% docs col_exported_at %}
@@ -208,8 +264,20 @@ Confirmed aircraft heard for the first time ever that day. Inflated before about
 First reception of any message (UTC).
 {% enddocs %}
 
+{% docs col_foreign_score %}
+1.0 for a foreign-registered aircraft that is not an airliner.
+{% enddocs %}
+
 {% docs col_formula %}
 Measure (simple metrics) or numerator / denominator metrics (ratios).
+{% enddocs %}
+
+{% docs col_frequency_score %}
+First-ever, returning or spiking visits, 0-1. Null until about 2026-11-21, when there is enough history.
+{% enddocs %}
+
+{% docs col_generated_at %}
+When the agent wrote the edition (UTC).
 {% enddocs %}
 
 {% docs col_ground_speed_kt %}
@@ -244,12 +312,20 @@ Wikimedia Commons image of a representative aircraft of the type (not this airfr
 True when the address was heard in at least 2 messages over all time: the canonical definition of an aircraft. Single-message addresses are usually decoding errors; filter on this when counting aircraft.
 {% enddocs %}
 
+{% docs col_is_ladd %}
+True when the aircraft is on the FAA LADD list: its owner asked the FAA to limit display of its flights on FAA-derived tracking services. Included here because it is received directly over the air; say so when you mention it.
+{% enddocs %}
+
 {% docs col_is_military %}
 True when any military rule fired (see military_rules).
 {% enddocs %}
 
 {% docs col_is_miscode %}
 True when tar1090-db reports the transponder broadcasts an invalid address; the identity is then not meaningful.
+{% enddocs %}
+
+{% docs col_is_pia %}
+True when the address is an FAA Privacy ICAO Address, a temporary address meant to hide the registration. Identity data for it is unreliable; say so when you mention it.
 {% enddocs %}
 
 {% docs col_kind %}
@@ -320,16 +396,36 @@ found or not_found.
 Positioned snapshots below 4,500 ft barometric, airborne, more than 5 nm from every local airport (KLAS, KVGT, KHND, KLSV, KBVU, KINS). Las Vegas terrain is about 2,000-3,000 ft.
 {% enddocs %}
 
+{% docs col_low_away_snapshots_7d %}
+Snapshots in the last 7 days below 4,500 ft, airborne, more than 5 nm from local airports.
+{% enddocs %}
+
 {% docs col_max_altitude_baro_ft %}
 Highest barometric altitude reported, in feet.
+{% enddocs %}
+
+{% docs col_max_altitude_baro_ft_7d %}
+Highest barometric altitude in the last 7 days, feet.
+{% enddocs %}
+
+{% docs col_max_circling_ratio_7d %}
+Highest circling_ratio of any sighting in the last 7 days.
 {% enddocs %}
 
 {% docs col_max_ground_speed_kt %}
 Highest ground speed reported in the sighting, knots.
 {% enddocs %}
 
+{% docs col_max_ground_speed_kt_7d %}
+Highest ground speed in the last 7 days, knots.
+{% enddocs %}
+
 {% docs col_message_count %}
 Valid messages received from the aircraft in the bucket.
+{% enddocs %}
+
+{% docs col_messages_7d %}
+Messages received in the last 7 days.
 {% enddocs %}
 
 {% docs col_messages_per_listening_hour %}
@@ -352,8 +448,16 @@ Confirmed military aircraft of this type ever heard here.
 Every rule that classified the aircraft as military: us_military_address_block (ICAO AE0000-AFFFFF), plane_alert_db, tar1090_military_flag, military_operator_code (callsign prefix such as RCH), us_coast_guard_callsign (supporting evidence only). Empty for civil aircraft.
 {% enddocs %}
 
+{% docs col_military_score %}
+1.0 when the aircraft is military.
+{% enddocs %}
+
 {% docs col_min_altitude_baro_ft %}
 Lowest barometric altitude reported in the sighting, feet.
+{% enddocs %}
+
+{% docs col_min_altitude_baro_ft_7d %}
+Lowest barometric altitude in the last 7 days, feet.
 {% enddocs %}
 
 {% docs col_mode %}
@@ -361,7 +465,7 @@ hourly (build except daily models), daily (build everything) or freshness.
 {% enddocs %}
 
 {% docs col_model %}
-View the column belongs to (null for metrics).
+OpenRouter model that wrote the edition.
 {% enddocs %}
 
 {% docs col_name %}
@@ -370,6 +474,10 @@ Metric, view or column name.
 
 {% docs col_nodes %}
 Models, tests and sources processed.
+{% enddocs %}
+
+{% docs col_notable_score %}
+Ranking score: 1.0 emergency + 0.45 type rarity + 0.20 military + 0.15 vintage civil + 0.20 civil government/public safety + 0.25 unusual path + 0.15 frequency novelty + 0.10 foreign non-airline, x0.3 for airliners without an emergency. Ranks candidates; not a finding.
 {% enddocs %}
 
 {% docs col_on_ground %}
@@ -385,15 +493,27 @@ Organization category of a shown owner (e.g. Corporation, Government, LLC, Organ
 {% enddocs %}
 
 {% docs col_owner_name %}
-Registered owner, shown only when it is an organization (FAA corporation, government, LLC or non-citizen corporation; or an organization name for non-US aircraft). Null for private individuals, trusts and unverified owners: never infer or guess a private owner.
+Registered owner, shown only when it is an organization: the FAA classifies the registrant as a corporation, government, LLC or non-citizen corporation, or, for aircraft the FAA does not know, the name reads as an organization. Null for private individuals, co-owners, partnerships, trusts and unverified owners: never infer or guess a private owner.
+{% enddocs %}
+
+{% docs col_ownership_score %}
+1.0 when a civil aircraft is owned or operated by a government or public-safety organization (police, sheriff, federal agency, university).
 {% enddocs %}
 
 {% docs col_passed %}
-True when the run had no errors.
+pub_dbt_runs: true when the run had no errors. pub_eval_runs: number of questions answered correctly or reference items found.
 {% enddocs %}
 
 {% docs col_path_nm %}
 Distance flown, nautical miles: sum of segments between positions at most 2 minutes apart. Null without positions.
+{% enddocs %}
+
+{% docs col_path_score %}
+Circling or low flying relative to the aircraft's own previous 28 days, 0-1. Low for aircraft that do this routinely (flight schools). Null without positions.
+{% enddocs %}
+
+{% docs col_photos %}
+Wikipedia/Wikimedia Commons photo per type designator, with author and license.
 {% enddocs %}
 
 {% docs col_position %}
@@ -404,6 +524,22 @@ GEOGRAPHY point of longitude/latitude; null without a position.
 Snapshots with a decoded position. Many Mode S aircraft report no position.
 {% enddocs %}
 
+{% docs col_prompt_tokens %}
+Prompt tokens billed by OpenRouter.
+{% enddocs %}
+
+{% docs col_purpose %}
+weekly (published on the website), eval (written to measure the agent) or test.
+{% enddocs %}
+
+{% docs col_rank_within_type %}
+Rank among this week's candidates of the same type (1 = highest score).
+{% enddocs %}
+
+{% docs col_reasons %}
+Readable explanations of every signal that contributed to notable_score.
+{% enddocs %}
+
 {% docs col_receiver_uptime_hourly__listening_seconds %}
 Seconds spent listening on either band in the hour.
 {% enddocs %}
@@ -412,8 +548,24 @@ Seconds spent listening on either band in the hour.
 Registration (tail number), e.g. N969NN, from the highest-precedence identity source. Null when no source identifies the aircraft.
 {% enddocs %}
 
+{% docs col_removed_statements %}
+Statements the verifier removed, with where they were and why. Shown for transparency; their content is unverified.
+{% enddocs %}
+
+{% docs col_run_id %}
+Unique id of the evaluation run.
+{% enddocs %}
+
 {% docs col_runs_7d %}
 Scheduled runs of the check in the last 7 days.
+{% enddocs %}
+
+{% docs col_score %}
+Share passed: Q&A answers matching the gold SQL, or reference items an edition covered.
+{% enddocs %}
+
+{% docs col_seconds %}
+Wall-clock seconds the agent took.
 {% enddocs %}
 
 {% docs col_seen_on_ground %}
@@ -426,6 +578,10 @@ Surrogate key of the sighting (address type, address, sighting number).
 
 {% docs col_sighting_number %}
 Sequence number of the sighting for this aircraft, starting at 1.
+{% enddocs %}
+
+{% docs col_sightings_7d %}
+Sightings in the last 7 days.
 {% enddocs %}
 
 {% docs col_sightings__is_confirmed %}
@@ -448,6 +604,10 @@ Messages received in the sighting.
 First reception in the sighting (UTC).
 {% enddocs %}
 
+{% docs col_sightings_prior_28d %}
+Sightings in the 28 days before the last 7: the aircraft's own baseline.
+{% enddocs %}
+
 {% docs col_snapshot_id %}
 Surrogate key of the snapshot (bucket, receiver, address type, address, frequency).
 {% enddocs %}
@@ -464,6 +624,30 @@ Mode A code, four octal digits. 7500 hijack, 7600 radio failure, 7700 emergency,
 Every Mode A code squawked during the sighting.
 {% enddocs %}
 
+{% docs col_statements_checked %}
+Statements in the agent's draft.
+{% enddocs %}
+
+{% docs col_statements_verified %}
+Statements whose every cited value matched the tool output and appeared in the sentence.
+{% enddocs %}
+
+{% docs col_status %}
+published, rejected (too few statements verified), eval or test.
+{% enddocs %}
+
+{% docs col_tool_call_count %}
+Number of tool calls the agent made.
+{% enddocs %}
+
+{% docs col_tool_calls %}
+The agent's tool calls in order: call id, tool, arguments and whether it succeeded.
+{% enddocs %}
+
+{% docs col_total %}
+Questions asked or reference items checked.
+{% enddocs %}
+
 {% docs col_total_turn_deg %}
 Sum of absolute track changes between snapshots at most 1 minute apart, degrees. 360 is one full turn.
 {% enddocs %}
@@ -472,12 +656,32 @@ Sum of absolute track changes between snapshots at most 1 minute apart, degrees.
 Track over ground, degrees true.
 {% enddocs %}
 
+{% docs col_turns %}
+Model turns in the agent loop.
+{% enddocs %}
+
+{% docs col_type_aircraft_heard %}
+Confirmed public aircraft of this type ever heard here (rarity).
+{% enddocs %}
+
+{% docs col_type_first_seen_this_week %}
+True when no public aircraft of this type was heard before the last 7 days.
+{% enddocs %}
+
 {% docs col_type_name %}
 Readable aircraft type, e.g. 'Boeing 737-800'. For military aircraft on plane-alert-db, its more specific name. Describes the type, not this airframe.
 {% enddocs %}
 
+{% docs col_type_score %}
+Type rarity component, 0-1: 1.0 when this is the only aircraft of its type heard here, plus 0.3 when the type is new this week.
+{% enddocs %}
+
 {% docs col_uptime_ratio %}
 Share of the hour spent listening on either band. Below 1.0 even without outages because of retuning between bands; well below means an outage.
+{% enddocs %}
+
+{% docs col_verification_rate %}
+statements_verified / statements_checked.
 {% enddocs %}
 
 {% docs col_vertical_rate_baro_fpm %}
@@ -486,6 +690,10 @@ Barometric vertical rate, feet per minute (negative = descending).
 
 {% docs col_vertical_rate_geom_fpm %}
 Geometric vertical rate, feet per minute.
+{% enddocs %}
+
+{% docs col_vintage_score %}
+1.0 for a civil, non-airline aircraft the FAA lists as built in 1975 or earlier.
 {% enddocs %}
 
 {% docs col_wake_category %}
@@ -500,8 +708,32 @@ Runs in the last 7 days that warned.
 Nodes that warned.
 {% enddocs %}
 
+{% docs col_week_end %}
+Day after the last Pacific day the edition covers (exclusive).
+{% enddocs %}
+
+{% docs col_week_start %}
+First Pacific day the edition covers.
+{% enddocs %}
+
 {% docs col_wikipedia_article_url %}
 English Wikipedia article for the type.
+{% enddocs %}
+
+{% docs col_wikipedia_description %}
+Wikipedia's one-line description of the type (e.g. 'airborne command post'). Use it, and cite it, for what an aircraft type is.
+{% enddocs %}
+
+{% docs col_wikipedia_title %}
+Title of the type's English Wikipedia article.
+{% enddocs %}
+
+{% docs col_window_end %}
+Day after the window's last Pacific day (exclusive). An edition published on a Monday covers window_end = that Monday.
+{% enddocs %}
+
+{% docs col_window_start %}
+First Pacific day of the 7-day window (inclusive).
 {% enddocs %}
 
 {% docs col_year_manufactured %}

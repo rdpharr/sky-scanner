@@ -2,9 +2,9 @@
 version: 2
 models:
 - name: pub_aircraft
-  description: 'Aircraft for public use (website, MCP server, notable-aircraft agent). Excludes aircraft
-    on the FAA LADD list and Privacy ICAO Addresses. Owner names appear only for registered organizations.
-    Same grain and definitions as dim_aircraft.
+  description: 'Aircraft for public use (website, MCP server, notable-aircraft agent). Includes aircraft
+    on the FAA LADD list and Privacy ICAO Addresses, flagged in is_ladd and is_pia. Owner names appear
+    only for registered organizations. Same grain and definitions as dim_aircraft.
 
     '
   columns:
@@ -40,6 +40,10 @@ models:
     description: '{{ doc(''col_is_military'') }}'
   - name: military_rules
     description: '{{ doc(''col_military_rules'') }}'
+  - name: is_ladd
+    description: '{{ doc(''col_is_ladd'') }}'
+  - name: is_pia
+    description: '{{ doc(''col_is_pia'') }}'
   - name: is_miscode
     description: '{{ doc(''col_is_miscode'') }}'
   - name: latest_callsign
@@ -192,6 +196,10 @@ models:
     description: '{{ doc(''col_aircraft_types__last_seen_at'') }}'
   - name: wikipedia_article_url
     description: '{{ doc(''col_wikipedia_article_url'') }}'
+  - name: wikipedia_title
+    description: '{{ doc(''col_wikipedia_title'') }}'
+  - name: wikipedia_description
+    description: '{{ doc(''col_wikipedia_description'') }}'
   - name: image_url
     description: '{{ doc(''col_image_url'') }}'
   - name: image_file_url
@@ -295,8 +303,8 @@ models:
     description: '{{ doc(''col_passed'') }}'
 - name: pub_live_snapshots
   description: 'Snapshots from the last 30 minutes, read directly from raw for the live map (seconds old).
-    Excludes LADD/PIA addresses. Identity columns (registration, type_name, ...) are null for aircraft
-    first heard since the last hourly build.
+    LADD/PIA aircraft are included and flagged. Identity columns (registration, type_name, ...) are null
+    for aircraft first heard since the last hourly build.
 
     '
   columns:
@@ -344,6 +352,10 @@ models:
     description: '{{ doc(''col_operator'') }}'
   - name: is_military
     description: '{{ doc(''col_is_military'') }}'
+  - name: is_ladd
+    description: '{{ doc(''col_is_ladd'') }}'
+  - name: is_pia
+    description: '{{ doc(''col_is_pia'') }}'
 - name: pub_definitions
   description: Canonical definitions of every metric and of every public view and column, exported from
     dbt after each build.
@@ -366,3 +378,163 @@ models:
     description: '{{ doc(''col_filter'') }}'
   - name: exported_at
     description: '{{ doc(''col_exported_at'') }}'
+- name: pub_notable_candidates
+  description: Aircraft heard in the last 7 days ranked by notable_score, with the score's components
+    and readable reasons. A starting point for the weekly notable-aircraft edition; scores rank candidates,
+    they are not findings.
+  columns:
+  - name: window_start
+    description: '{{ doc(''col_window_start'') }}'
+  - name: window_end
+    description: '{{ doc(''col_window_end'') }}'
+  - name: address_type
+    description: '{{ doc(''col_address_type'') }}'
+  - name: address
+    description: '{{ doc(''col_address'') }}'
+  - name: registration
+    description: '{{ doc(''col_registration'') }}'
+  - name: designator
+    description: '{{ doc(''col_designator'') }}'
+  - name: type_name
+    description: '{{ doc(''col_type_name'') }}'
+  - name: aircraft_class
+    description: '{{ doc(''col_aircraft_class'') }}'
+  - name: aircraft_kind
+    description: '{{ doc(''col_aircraft_kind'') }}'
+  - name: operator
+    description: '{{ doc(''col_operator'') }}'
+  - name: owner_name
+    description: '{{ doc(''col_owner_name'') }}'
+  - name: country
+    description: '{{ doc(''col_country'') }}'
+  - name: year_manufactured
+    description: '{{ doc(''col_year_manufactured'') }}'
+  - name: is_military
+    description: '{{ doc(''col_is_military'') }}'
+  - name: military_rules
+    description: '{{ doc(''col_military_rules'') }}'
+  - name: is_ladd
+    description: '{{ doc(''col_is_ladd'') }}'
+  - name: is_pia
+    description: '{{ doc(''col_is_pia'') }}'
+  - name: latest_callsign
+    description: '{{ doc(''col_latest_callsign'') }}'
+  - name: first_seen_at
+    description: '{{ doc(''col_first_seen_at'') }}'
+  - name: sightings_7d
+    description: '{{ doc(''col_sightings_7d'') }}'
+  - name: days_seen_7d
+    description: '{{ doc(''col_days_seen_7d'') }}'
+  - name: messages_7d
+    description: '{{ doc(''col_messages_7d'') }}'
+  - name: max_circling_ratio_7d
+    description: '{{ doc(''col_max_circling_ratio_7d'') }}'
+  - name: low_away_snapshots_7d
+    description: '{{ doc(''col_low_away_snapshots_7d'') }}'
+  - name: emergency_code_7d
+    description: '{{ doc(''col_emergency_code_7d'') }}'
+  - name: max_altitude_baro_ft_7d
+    description: '{{ doc(''col_max_altitude_baro_ft_7d'') }}'
+  - name: min_altitude_baro_ft_7d
+    description: '{{ doc(''col_min_altitude_baro_ft_7d'') }}'
+  - name: max_ground_speed_kt_7d
+    description: '{{ doc(''col_max_ground_speed_kt_7d'') }}'
+  - name: sightings_prior_28d
+    description: '{{ doc(''col_sightings_prior_28d'') }}'
+  - name: type_aircraft_heard
+    description: '{{ doc(''col_type_aircraft_heard'') }}'
+  - name: type_first_seen_this_week
+    description: '{{ doc(''col_type_first_seen_this_week'') }}'
+  - name: notable_score
+    description: '{{ doc(''col_notable_score'') }}'
+  - name: type_score
+    description: '{{ doc(''col_type_score'') }}'
+  - name: military_score
+    description: '{{ doc(''col_military_score'') }}'
+  - name: ownership_score
+    description: '{{ doc(''col_ownership_score'') }}'
+  - name: foreign_score
+    description: '{{ doc(''col_foreign_score'') }}'
+  - name: vintage_score
+    description: '{{ doc(''col_vintage_score'') }}'
+  - name: path_score
+    description: '{{ doc(''col_path_score'') }}'
+  - name: frequency_score
+    description: '{{ doc(''col_frequency_score'') }}'
+  - name: emergency_score
+    description: '{{ doc(''col_emergency_score'') }}'
+  - name: reasons
+    description: '{{ doc(''col_reasons'') }}'
+  - name: rank_within_type
+    description: '{{ doc(''col_rank_within_type'') }}'
+  - name: candidates_of_type
+    description: '{{ doc(''col_candidates_of_type'') }}'
+- name: pub_notable_editions
+  description: Weekly notable-aircraft editions written by the agent through the MCP server, verified
+    statement by statement, with photos, what the verifier removed, the agent's tool calls and cost.
+  columns:
+  - name: edition_id
+    description: '{{ doc(''col_edition_id'') }}'
+  - name: week_start
+    description: '{{ doc(''col_week_start'') }}'
+  - name: week_end
+    description: '{{ doc(''col_week_end'') }}'
+  - name: generated_at
+    description: '{{ doc(''col_generated_at'') }}'
+  - name: purpose
+    description: '{{ doc(''col_purpose'') }}'
+  - name: status
+    description: '{{ doc(''col_status'') }}'
+  - name: model
+    description: '{{ doc(''col_model'') }}'
+  - name: edition
+    description: '{{ doc(''col_edition'') }}'
+  - name: photos
+    description: '{{ doc(''col_photos'') }}'
+  - name: statements_checked
+    description: '{{ doc(''col_statements_checked'') }}'
+  - name: statements_verified
+    description: '{{ doc(''col_statements_verified'') }}'
+  - name: verification_rate
+    description: '{{ doc(''col_verification_rate'') }}'
+  - name: removed_statements
+    description: '{{ doc(''col_removed_statements'') }}'
+  - name: tool_calls
+    description: '{{ doc(''col_tool_calls'') }}'
+  - name: tool_call_count
+    description: '{{ doc(''col_tool_call_count'') }}'
+  - name: turns
+    description: '{{ doc(''col_turns'') }}'
+  - name: prompt_tokens
+    description: '{{ doc(''col_prompt_tokens'') }}'
+  - name: completion_tokens
+    description: '{{ doc(''col_completion_tokens'') }}'
+  - name: cost_usd
+    description: '{{ doc(''col_cost_usd'') }}'
+  - name: seconds
+    description: '{{ doc(''col_seconds'') }}'
+- name: pub_eval_runs
+  description: Evaluations of the notable-aircraft agent. kind qa is accuracy on factual questions graded
+    against SQL; kind edition_recall is the share of the owner's hand-checked notable items for 26 Sep
+    to 2 Oct 2026 an edition covered.
+  columns:
+  - name: run_id
+    description: '{{ doc(''col_run_id'') }}'
+  - name: kind
+    description: '{{ doc(''col_eval_runs__kind'') }}'
+  - name: model
+    description: '{{ doc(''col_eval_runs__model'') }}'
+  - name: started_at
+    description: '{{ doc(''col_eval_runs__started_at'') }}'
+  - name: score
+    description: '{{ doc(''col_score'') }}'
+  - name: passed
+    description: '{{ doc(''col_passed'') }}'
+  - name: total
+    description: '{{ doc(''col_total'') }}'
+  - name: cost_usd
+    description: '{{ doc(''col_eval_runs__cost_usd'') }}'
+  - name: seconds
+    description: '{{ doc(''col_eval_runs__seconds'') }}'
+  - name: details
+    description: '{{ doc(''col_details'') }}'

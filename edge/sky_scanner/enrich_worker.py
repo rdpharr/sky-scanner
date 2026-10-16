@@ -103,6 +103,17 @@ class EnrichmentWorker:
             )
             if existing:
                 summary = {"status": "skipped", "records": len(records), "dataset_hash": dataset_hash}
+                # Fields added to the importer later (registrant type, year of
+                # manufacture) are filled from an unchanged dataset too.
+                missing = _query_one(
+                    storage,
+                    "SELECT EXISTS (SELECT 1 FROM aircraft_metadata WHERE source_name = %s "
+                    "AND registry_status = 'present' AND registrant_type IS NULL "
+                    "AND year_mfr IS NULL LIMIT 1)",
+                    ("faa_registry",),
+                )
+                if missing and hasattr(storage, "fill_added_fields"):
+                    summary["filled"] = storage.fill_added_fields(records)
             else:
                 import_id = storage.save_metadata_import(
                     records,

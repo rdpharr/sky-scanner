@@ -126,6 +126,27 @@ ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
 """
 
 
+def _stage_metadata(cursor, records: list[dict[str, Any]], batch_size: int) -> None:
+    """Load records into a transaction-local staging table."""
+    cursor.execute(_METADATA_STAGE_CREATE)
+    stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES ({', '.join(['%s'] * 15)})"
+    for offset in range(0, len(records), batch_size):
+        chunk = records[offset:offset + batch_size]
+        values = [(
+            record.get("address_type", "icao"),
+            record.get("icao_address") or record.get("address"),
+            record.get("registration"), record.get("manufacturer"),
+            record.get("model"), record.get("aircraft_type"),
+            record.get("registered_owner"), record.get("operator"),
+            record.get("icao_type_code"), record.get("operator_icao"),
+            record.get("country"), record.get("category"), record.get("tags"),
+            record.get("registrant_type"), record.get("year_mfr"),
+        ) for record in chunk]
+        if values:
+            cursor.executemany(stage_sql, values)
+    cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
+
+
 def _utc(value: Any) -> datetime:
     if isinstance(value, datetime):
         result = value
@@ -223,6 +244,24 @@ class PostgresStorage:
         finally:
             cursor.close()
 
+    def fill_added_fields(self, records: Iterable[dict[str, Any]], *,
+                          source_name: str = "faa_registry", batch_size: int = 5000) -> int:
+        """Fill fields added after versions were written into each aircraft's
+        latest version, from an already-imported dataset. Creates no versions.
+        Returns the number of versions filled."""
+        cursor = self.connection.cursor()
+        try:
+            _stage_metadata(cursor, list(records), batch_size)
+            cursor.execute(_METADATA_FILL_ADDED_FIELDS, {"source_name": source_name})
+            filled = max(0, int(cursor.rowcount or 0))
+            self.connection.commit()
+            return filled
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
     def save_metadata_import(
         self, records: Iterable[dict[str, Any]], *, source_url: str | None = None,
         retrieved_at: Any | None = None, dataset_hash: str | None = None,
@@ -265,23 +304,7 @@ class PostgresStorage:
             row = cursor.fetchone()
             if row:
                 import_id = row[0]
-            cursor.execute(_METADATA_STAGE_CREATE)
-            stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES ({', '.join(['%s'] * 15)})"
-            for offset in range(0, len(records), batch_size):
-                chunk = records[offset:offset + batch_size]
-                values = [(
-                    record.get("address_type", "icao"),
-                    record.get("icao_address") or record.get("address"),
-                    record.get("registration"), record.get("manufacturer"),
-                    record.get("model"), record.get("aircraft_type"),
-                    record.get("registered_owner"), record.get("operator"),
-                    record.get("icao_type_code"), record.get("operator_icao"),
-                    record.get("country"), record.get("category"), record.get("tags"),
-                    record.get("registrant_type"), record.get("year_mfr"),
-                ) for record in chunk]
-                if values:
-                    cursor.executemany(stage_sql, values)
-            cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
+            _stage_metadata(cursor, records, batch_size)
             params = {"source_name": source_name, "source_url": source_url, "retrieved_at": retrieved,
                       "dataset_hash": dataset_hash, "import_id": import_id}
             cursor.execute(_METADATA_FILL_ADDED_FIELDS, params)
@@ -290,8 +313,11 @@ class PostgresStorage:
             if not partial:
                 cursor.execute(_METADATA_INSERT_ABSENT, params)
                 changed += max(0, int(cursor.rowcount or 0))
-            cursor.execute("UPDATE enrichment_imports SET changed_count = %s WHERE id = %s",
-                           (changed, import_id))
+            # Added, not set: a concurrent import of the same dataset waits on
+            # the import row above, then finds nothing changed. Setting the
+            # count would overwrite the first import's.
+            cursor.execute("UPDATE enrichment_imports SET changed_count = "
+                           "coalesce(changed_count, 0) + %s WHERE id = %s", (changed, import_id))
             self.connection.commit()
             return str(import_id)
         except Exception:

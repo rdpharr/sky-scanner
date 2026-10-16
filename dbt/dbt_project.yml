@@ -17,6 +17,10 @@ vars:
   # Fewer messages than this, ever, and an address is "unconfirmed":
   # usually a decoding error rather than a real aircraft.
   confirmed_min_messages: 2
+  # Aircraft-level novelty ("first ever", "back after an absence") means
+  # little until there is history to compare with: collection began here.
+  collection_start: "2026-09-26"
+  novelty_min_history_days: 56
 
 models:
   sky_scanner:

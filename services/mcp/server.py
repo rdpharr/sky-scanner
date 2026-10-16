@@ -2,8 +2,8 @@
 
 Runs over Streamable HTTP on Cloud Run (MCP_TRANSPORT=http) or stdio for a
 local client (the default). It authenticates to BigQuery as sky-mcp, which can
-read only the public views: no tool can reach owner names, LADD/PIA aircraft
-or raw tables, whatever it is asked. Every query is parameterized and capped
+read only the public views: no tool can reach private owners' names or raw
+tables, whatever it is asked. Every query is parameterized and capped
 in bytes billed.
 """
 
@@ -14,7 +14,8 @@ import os
 import threading
 import time
 from collections import deque
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any
 
@@ -53,8 +54,9 @@ Rules for answers:
   reliability: FAA is official; OpenSky is crowdsourced and can be stale.
 - Owner names appear only for organizations. Never guess or infer who owns a
   privately registered aircraft or who is aboard any aircraft.
-- Aircraft whose owners opted out of display (FAA LADD) are excluded; their
-  absence is not evidence they were not there.
+- Aircraft on the FAA LADD list (is_ladd) are included because they are heard
+  directly; say when an aircraft is LADD-listed. Privacy ICAO Address aircraft
+  (is_pia) have unreliable identities; say so.
 - Coverage is partial: many aircraft report no position, the radio splits time
   between two bands, and outages happen (see receiver_status).
 """
@@ -98,15 +100,22 @@ def rate_limit() -> None:
         _calls.append(now)
 
 
-def jsonable(value: Any) -> Any:
+# Coordinates keep their precision; other measurements are rounded so agents
+# quote readable numbers (27000 ft, 455 kt, 8.7 nm) rather than 454.881866.
+EXACT = {"latitude", "longitude", "south", "north", "east", "west"}
+
+
+def jsonable(value: Any, key: str = "") -> Any:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Decimal):
-        return float(value)
+        value = float(value)
+    if isinstance(value, float) and key not in EXACT:
+        return int(round(value)) if abs(value) >= 100 or value.is_integer() else round(value, 1)
     if isinstance(value, list):
-        return [jsonable(v) for v in value]
+        return [jsonable(v, key) for v in value]
     if isinstance(value, dict):
-        return {k: jsonable(v) for k, v in value.items()}
+        return {k: jsonable(v, k) for k, v in value.items()}
     return value
 
 
@@ -137,6 +146,30 @@ def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
 
 
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def date_range(start_date: str, end_date: str) -> tuple[str, str]:
+    """Pacific dates, both inclusive ("26 September to 2 October" is
+    start_date 2026-09-26, end_date 2026-10-02). Returns (start, day after
+    end) for SQL. Defaults: the 7 complete days before today. Inclusive
+    because an exclusive end date silently dropped the last day for agents
+    in evaluation (evals/qa_questions.json)."""
+    try:
+        last = date.fromisoformat(end_date) if end_date else datetime.now(PACIFIC).date() - timedelta(days=1)
+        start = date.fromisoformat(start_date) if start_date else last - timedelta(days=6)
+    except ValueError:
+        raise ToolError("Dates must be YYYY-MM-DD (Pacific).") from None
+    if not timedelta(days=0) <= last - start <= timedelta(days=91):
+        raise ToolError("end_date must be on or after start_date, at most 92 days.")
+    return start.isoformat(), (last + timedelta(days=1)).isoformat()
+
+
+# SQL for "this timestamp falls in the Pacific date range [@start, @end)".
+IN_RANGE = ("{col} >= timestamp(@start, 'America/Los_Angeles') "
+            "and {col} < timestamp(@end, 'America/Los_Angeles')")
+
+
 def resolve(identifier: str) -> dict[str, Any]:
     """Find one public aircraft by address, registration or callsign."""
     rows = query(f"""
@@ -147,8 +180,7 @@ def resolve(identifier: str) -> dict[str, Any]:
         order by (address = @id) desc, (upper(registration) = @id) desc, last_seen_at desc
         limit 1""", id=identifier.strip().upper())
     if not rows:
-        raise ToolError(f"No public aircraft matches {identifier!r}. Try search_aircraft. "
-                         "(Aircraft on the FAA LADD list are never available.)")
+        raise ToolError(f"No aircraft matches {identifier!r}. Try search_aircraft.")
     return rows[0]
 
 
@@ -259,10 +291,24 @@ def get_aircraft(identifier: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def get_sightings(identifier: str, days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
+def get_sightings(identifier: str, days: int = 30, limit: int = 50,
+                  start_date: str = "", end_date: str = "") -> list[dict[str, Any]]:
     """An aircraft's sightings (runs of reports with no gap over 10 minutes),
-    newest first, with altitude, speed and flight-path features."""
+    newest first, with altitude, speed and flight-path features. Give
+    start_date/end_date (Pacific YYYY-MM-DD, inclusive) for a specific
+    period; otherwise the last `days` days."""
     key = resolve(identifier)
+    if start_date or end_date:
+        start, end = date_range(start_date, end_date)
+        return query(f"""
+            select sighting_number, started_at, ended_at, duration_minutes, snapshots, messages,
+                   bands_mhz, callsigns, squawks, min_altitude_baro_ft, max_altitude_baro_ft,
+                   max_ground_speed_kt, positioned_snapshots, path_nm, displacement_nm, circling_ratio,
+                   total_turn_deg, low_away_from_airport_snapshots, closest_airport_nm, emergency_squawk
+            from {table('pub_sightings')}
+            where address_type = @t and address = @a and {IN_RANGE.format(col='started_at')}
+            order by started_at desc limit @limit""",
+            t=key["address_type"], a=key["address"], start=start, end=end, limit=clamp(limit, 1, 200))
     return query(f"""
         select sighting_number, started_at, ended_at, duration_minutes, snapshots, messages,
                bands_mhz, callsigns, squawks, min_altitude_baro_ft, max_altitude_baro_ft,
@@ -383,32 +429,213 @@ def recent_activity(minutes: int = 10) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def traffic_stats(days: int = 7) -> list[dict[str, Any]]:
-    """Daily traffic per band (Pacific days): confirmed, military and identified
-    aircraft, messages, and rates per listening hour. Compare days with the
-    per-listening-hour rates; raw counts depend on time spent on each band."""
+def traffic_stats(start_date: str = "", end_date: str = "") -> list[dict[str, Any]]:
+    """Daily traffic per band (Pacific days, inclusive; default the last 7
+    complete days): confirmed, military and identified aircraft, messages, and
+    rates per listening hour. Compare days with the per-listening-hour rates;
+    raw counts depend on time spent on each band."""
+    start, end = date_range(start_date, end_date)
     return query(f"""
         select * from {table('pub_daily_traffic')}
-        where day >= date_sub(current_date('America/Los_Angeles'), interval @d day)
-        order by day desc, band_mhz""", d=clamp(days, 1, 365))
+        where day >= date(@start) and day < date(@end)
+        order by day desc, band_mhz""", start=start, end=end)
 
 
 @mcp.tool(annotations=READ_ONLY)
-def military_sightings(days: int = 7) -> list[dict[str, Any]]:
-    """Military aircraft heard in the last N days, with type, operator, the
-    rules that classified them as military and their sightings."""
+def military_sightings(start_date: str = "", end_date: str = "") -> list[dict[str, Any]]:
+    """Military aircraft heard in a period (Pacific dates, inclusive;
+    default the last 7 complete days), with type, operator, the rules that
+    classified them as military and their sightings."""
+    start, end = date_range(start_date, end_date)
     return query(f"""
         with recent as (
             select address_type, address, count(*) as sightings, min(started_at) as first_sighting,
                    max(ended_at) as latest_sighting, max(max_altitude_baro_ft) as max_altitude_baro_ft
             from {table('pub_sightings')}
-            where is_military and started_at >= timestamp_sub(current_timestamp(), interval @d day)
+            where is_military and {IN_RANGE.format(col='started_at')}
             group by address_type, address)
         select a.address, a.registration, a.type_name, a.designator, a.operator, a.military_rules,
-               a.callsigns, r.sightings, r.first_sighting, r.latest_sighting, r.max_altitude_baro_ft
+               a.callsigns, a.is_ladd, a.is_pia, r.sightings, r.first_sighting, r.latest_sighting,
+               r.max_altitude_baro_ft
         from recent r join {table('pub_aircraft')} a using (address_type, address)
         where a.is_confirmed
-        order by r.latest_sighting desc""", d=clamp(days, 1, 365))
+        order by r.latest_sighting desc""", start=start, end=end)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_notable_candidates(end_date: str = "", limit: int = 25, per_type: int = 1,
+                           kind: str = "") -> dict[str, Any]:
+    """Aircraft heard in a 7-day window, ranked by a notability score, with
+    the reasons each scored. A starting point for "what was notable this
+    week": investigate candidates with get_aircraft, get_history,
+    get_flight_summary and get_type_info before concluding anything.
+
+    end_date: the window's last Pacific day (inclusive; the window is that
+    day and the 6 before it); default the latest window. per_type caps how many
+    aircraft of one type are listed (the rest are counted in
+    candidates_of_type), so six similar transports do not crowd out others.
+    kind: "military" or "civil" lists one side only (empty for both); ask for
+    each separately so rare civil aircraft are not crowded out.
+    """
+    week_ending = date_range("", end_date)[1] if end_date else ""
+    rows = query(f"""
+        select * from {table('pub_notable_candidates')}
+        where window_end = coalesce(date(nullif(@week_ending, '')),
+                                    (select max(window_end) from {table('pub_notable_candidates')}))
+          and rank_within_type <= @per_type
+          and (@kind = '' or (@kind = 'military') = is_military)
+        order by notable_score desc limit @limit""",
+        week_ending=week_ending, per_type=clamp(per_type, 1, 10), limit=clamp(limit, 1, 50),
+        kind=kind.strip().lower() if kind.strip().lower() in ("military", "civil") else "")
+    return {
+        "scoring": "notable_score = 1.0 emergency squawk + 0.45 type rarity here + 0.20 military "
+                   "+ 0.15 vintage civil (built 1975 or earlier) "
+                   "+ 0.20 civil government/public-safety owner or operator + 0.25 flight path "
+                   "unusual for this aircraft + 0.15 frequency novelty + 0.10 foreign non-airline; "
+                   "airliners x0.3 unless an emergency. frequency_score is null until about "
+                   "2026-11-21 (too little history). Scores rank candidates; they are not findings.",
+        "candidates": rows,
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def week_summary(start_date: str = "", end_date: str = "") -> dict[str, Any]:
+    """Totals for a period (Pacific dates, inclusive; default the last 7
+    complete days): confirmed aircraft, sightings, snapshots and messages,
+    first and last report, aircraft by kind and class, LADD and PIA counts,
+    foreign-registered wide-bodies, and listening hours per band."""
+    start, end = date_range(start_date, end_date)
+    totals = query(f"""
+        select count(*) as snapshots, sum(message_count) as messages,
+               count(distinct address) as addresses_heard,
+               min(first_received_at) as first_report, max(last_received_at) as last_report
+        from {table('pub_snapshots')} where {IN_RANGE.format(col='bucket_start')}""",
+        start=start, end=end)[0]
+    aircraft = query(f"""
+        with heard as (
+            select distinct address_type, address from {table('pub_sightings')}
+            where {IN_RANGE.format(col='started_at')})
+        select count(*) as confirmed_aircraft,
+               countif(a.aircraft_kind = 'Airline') as airline,
+               countif(a.aircraft_kind = 'Military') as military,
+               countif(a.aircraft_kind = 'Other') as other,
+               countif(a.is_ladd) as ladd_listed, countif(a.is_pia) as privacy_addresses,
+               countif(a.aircraft_class = 'Wide-body jet' and a.country != 'United States'
+                       and a.aircraft_kind != 'Military') as foreign_wide_bodies,
+               countif(a.identity_source is null) as unidentified
+        from heard join {table('pub_aircraft')} a using (address_type, address)
+        where a.is_confirmed""", start=start, end=end)[0]
+    classes = query(f"""
+        with heard as (
+            select distinct address_type, address from {table('pub_sightings')}
+            where {IN_RANGE.format(col='started_at')})
+        select a.aircraft_class, count(*) as aircraft
+        from heard join {table('pub_aircraft')} a using (address_type, address)
+        where a.is_confirmed group by 1 order by 2 desc""", start=start, end=end)
+    sightings = query(f"""
+        select count(*) as sightings from {table('pub_sightings')}
+        where is_confirmed and {IN_RANGE.format(col='started_at')}""", start=start, end=end)[0]
+    listening = query(f"""
+        select round(sum(listening_seconds_1090) / 3600, 1) as hours_1090,
+               round(sum(listening_seconds_978) / 3600, 1) as hours_978
+        from {table('pub_receiver_uptime_hourly')} where {IN_RANGE.format(col='hour_start')}""",
+        start=start, end=end)[0]
+    return {"start_date": start, "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
+            "times": "UTC timestamps",
+            **totals, **aircraft, **sightings, "by_class": classes, "listening_hours": listening}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def callsign_activity(prefix: str, start_date: str = "", end_date: str = "") -> dict[str, Any]:
+    """Every sighting of aircraft whose callsign starts with a prefix (e.g.
+    JANET, RCH, TALON, a company's ICAO code) in a period (Pacific dates,
+    inclusive): when (Pacific day, weekday and hour), how high, which way
+    (median track and whether climbing or descending). Use it to describe
+    schedules and routes, e.g. a shuttle's daily pattern."""
+    start, end = date_range(start_date, end_date)
+    rows = query(f"""
+        with s as (
+            select * from {table('pub_sightings')}
+            where {IN_RANGE.format(col='started_at')}
+              and exists(select 1 from unnest(callsigns) c where starts_with(c, @prefix))),
+        tracks as (
+            select p.address, s.sighting_number,
+                   approx_quantiles(p.track_deg, 2 ignore nulls)[safe_offset(1)] as median_track_deg,
+                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start limit 1)[safe_offset(0)] as first_alt,
+                   array_agg(p.altitude_baro_ft ignore nulls order by p.bucket_start desc limit 1)[safe_offset(0)] as last_alt
+            from s join {table('pub_snapshots')} p
+              on p.address_type = s.address_type and p.address = s.address
+             and p.bucket_start between timestamp_sub(s.started_at, interval 15 second) and s.ended_at
+            where {IN_RANGE.format(col='p.bucket_start')}
+            group by p.address, s.sighting_number)
+        select a.registration, s.address, s.callsigns, a.type_name, a.owner_name,
+               format_timestamp('%F', s.started_at, 'America/Los_Angeles') as day_pt,
+               format_timestamp('%A', s.started_at, 'America/Los_Angeles') as weekday,
+               format_timestamp('%H:%M', s.started_at, 'America/Los_Angeles') as time_pt,
+               round(s.duration_minutes, 1) as minutes, s.min_altitude_baro_ft, s.max_altitude_baro_ft,
+               round(t.median_track_deg) as median_track_deg,
+               case when t.last_alt - t.first_alt > 500 then 'climbing'
+                    when t.first_alt - t.last_alt > 500 then 'descending' else 'level' end as vertical
+        from s join {table('pub_aircraft')} a using (address_type, address)
+        left join tracks t on t.address = s.address and t.sighting_number = s.sighting_number
+        order by s.started_at""", start=start, end=end, prefix=prefix.strip().upper())
+    return {"prefix": prefix.strip().upper(), "start_date": start,
+            "end_date": (date.fromisoformat(end) - timedelta(days=1)).isoformat(),
+            "sightings": len(rows), "aircraft": len({r["address"] for r in rows}),
+            "note": "median_track_deg: 0 north, 90 east, 180 south, 270 west; null without positions.",
+            "rows": rows}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def operator_fleets(start_date: str = "", end_date: str = "", min_aircraft: int = 2,
+                    limit: int = 30) -> list[dict[str, Any]]:
+    """Organizations (registered owner organization, else operator) with
+    several aircraft heard in a period (Pacific dates, inclusive): how
+    many aircraft, sightings and which types. Finds flight schools, charter
+    and fractional fleets, airlines and government fleets. Private owners are
+    never named, so their aircraft do not appear here."""
+    start, end = date_range(start_date, end_date)
+    return query(f"""
+        with s as (
+            select address_type, address, count(*) as sightings from {table('pub_sightings')}
+            where is_confirmed and {IN_RANGE.format(col='started_at')}
+            group by address_type, address)
+        select coalesce(a.owner_name, a.operator) as organization,
+               any_value(a.owner_category) as owner_category,
+               count(*) as aircraft, sum(s.sightings) as sightings,
+               array_agg(distinct a.type_name ignore nulls limit 6) as types,
+               array_agg(coalesce(a.registration, a.address) order by s.sightings desc limit 8) as examples,
+               countif(a.is_ladd) as ladd_listed
+        from s join {table('pub_aircraft')} a using (address_type, address)
+        where coalesce(a.owner_name, a.operator) is not null
+        group by organization having count(*) >= @min
+        order by sightings desc limit @limit""",
+        start=start, end=end, min=clamp(min_aircraft, 1, 50), limit=clamp(limit, 1, 50))
+
+
+@mcp.tool(annotations=READ_ONLY)
+def busiest_areas(start_date: str = "", end_date: str = "", max_altitude_ft: int = 8000,
+                  limit: int = 10) -> list[dict[str, Any]]:
+    """Where aircraft spend time at low altitude in a period (Pacific dates,
+    inclusive): roughly 3 by 3 nm grid cells ranked by airborne snapshots
+    below max_altitude_ft, with distinct aircraft, their circling and the
+    organizations seen. Finds training areas, helicopter work and approaches."""
+    start, end = date_range(start_date, end_date)
+    return query(f"""
+        with p as (
+            select p.*, round(p.latitude / 0.05) * 0.05 as lat_cell,
+                   round(p.longitude / 0.05) * 0.05 as lon_cell
+            from {table('pub_snapshots')} p
+            where {IN_RANGE.format(col='p.bucket_start')} and p.latitude is not null
+              and p.altitude_baro_ft < @max_alt and not coalesce(p.on_ground, false))
+        select round(p.lat_cell, 2) as latitude, round(p.lon_cell, 2) as longitude,
+               count(*) as snapshots, count(distinct p.address) as aircraft,
+               round(avg(p.altitude_baro_ft)) as avg_altitude_baro_ft,
+               array_agg(distinct coalesce(a.owner_name, a.operator) ignore nulls limit 5) as organizations,
+               array_agg(distinct a.type_name ignore nulls limit 5) as types
+        from p left join {table('pub_aircraft')} a using (address_type, address)
+        group by 1, 2 order by snapshots desc limit @limit""",
+        start=start, end=end, max_alt=clamp(max_altitude_ft, 500, 20000), limit=clamp(limit, 1, 30))
 
 
 # ---------------------------------------------------------------- operations

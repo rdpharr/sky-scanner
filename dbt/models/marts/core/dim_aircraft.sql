@@ -14,6 +14,21 @@ with activity as (
     group by address_type, address
 ),
 
+type_rows as (
+    -- The Doc 8643 row whose manufacturer appears in the aircraft's own
+    -- description (FAA, tar1090-db or OpenSky), else the first row. Rows are
+    -- alphabetical by manufacturer, so "first" alone often picks a licence
+    -- builder (e.g. "Aero Eli Yo-Yo" for a Robinson R22).
+    select i.address_type, i.address, r.manufacturer_code, r.model_full_name
+    from {{ ref('int_aircraft_identity') }} as i
+    inner join {{ ref('stg_doc8643_type_rows') }} as r on r.designator = i.designator
+    qualify row_number() over (
+        partition by i.address_type, i.address
+        order by strpos(upper(coalesce(i.aircraft_description, '')),
+                        split(upper(r.manufacturer_code), ' ')[safe_offset(0)]) > 0 desc,
+                 r._row_number) = 1
+),
+
 airliner_prefixes as (
     select array_agg(type_prefix) as prefixes from {{ ref('airliner_type_prefixes') }}
 ),
@@ -32,8 +47,8 @@ classified as (
         t.description as doc8643_description,
         t.wake_category,
         n.type_name as curated_type_name,
-        t.manufacturer_code,
-        t.model_full_name,
+        tr.manufacturer_code,
+        tr.model_full_name,
         exists(select 1 from unnest(ap.prefixes) as prefix
                where starts_with(i.designator, prefix)) as is_airliner_designator,
         ac.pattern as airline_callsign_pattern
@@ -41,6 +56,7 @@ classified as (
     inner join {{ ref('int_military_classification') }} as m using (address_type, address)
     left join {{ ref('stg_doc8643_types') }} as t on t.designator = i.designator
     left join {{ ref('icao_type_names') }} as n on n.designator = i.designator
+    left join type_rows as tr on tr.address_type = i.address_type and tr.address = i.address
     cross join airliner_prefixes as ap
     cross join airline_callsigns as ac
 ),
@@ -73,8 +89,10 @@ select
     c.designator,
     case
         when c.is_miscode then 'Invalid transponder address (miscode)'
-        -- For military airframes plane-alert-db's type name is more specific.
-        when c.is_military and c.plane_alert_model is not null then c.plane_alert_model
+        -- For military airframes the lists' own names are more specific
+        -- (e.g. "Boeing VC-25A" rather than Doc 8643's "Boeing 747-200").
+        when c.is_military and c.plane_alert_model is not null then {{ tidy_model_name('c.plane_alert_model') }}
+        when c.is_military and c.tar1090_model is not null then {{ tidy_model_name('c.tar1090_model') }}
         else coalesce(c.curated_type_name,
                       nullif(trim(concat(initcap(coalesce(c.manufacturer_code, '')), ' ',
                                          coalesce(c.model_full_name, ''))), ''),

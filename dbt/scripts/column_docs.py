@@ -26,13 +26,15 @@ COLUMNS = {
     "aircraft_class": "One of: Narrow-body / regional jet, Wide-body jet, Business jet, Turboprop, Piston, Helicopter, Other, Unidentified (no type known). Derived from ICAO Doc 8643.",
     "aircraft_kind": "Military (any military rule fired), Airline (airline callsign prefix, airline-like owner or operator, or an airliner owned by a lessor), or Other (general aviation, business, government civil). Null in live data for aircraft not yet classified.",
     "identity_source": "Highest-precedence source identifying the aircraft: faa_registry (official), tar1090_db (community), opensky (crowdsourced, may be stale), plane_alert_mil (military list). Null means unidentified.",
-    "owner_name": "Registered owner, shown only when it is an organization (FAA corporation, government, LLC or non-citizen corporation; or an organization name for non-US aircraft). Null for private individuals, trusts and unverified owners: never infer or guess a private owner.",
+    "owner_name": "Registered owner, shown only when it is an organization: the FAA classifies the registrant as a corporation, government, LLC or non-citizen corporation, or, for aircraft the FAA does not know, the name reads as an organization. Null for private individuals, co-owners, partnerships, trusts and unverified owners: never infer or guess a private owner.",
     "owner_category": "Organization category of a shown owner (e.g. Corporation, Government, LLC, Organization); 'Private or unverified' when the name is withheld; 'Unknown' when no source lists an owner.",
     "operator": "Who operates the aircraft: for military aircraft plane-alert-db's operator or the military operator-code name; otherwise OpenSky's operator, which is crowdsourced and can be stale. Not the owner.",
     "country": "Country of registration according to OpenSky.",
     "year_manufactured": "Year built, from the FAA registry (US aircraft only). Null until imported or for non-US aircraft.",
     "is_military": "True when any military rule fired (see military_rules).",
     "military_rules": "Every rule that classified the aircraft as military: us_military_address_block (ICAO AE0000-AFFFFF), plane_alert_db, tar1090_military_flag, military_operator_code (callsign prefix such as RCH), us_coast_guard_callsign (supporting evidence only). Empty for civil aircraft.",
+    "is_ladd": "True when the aircraft is on the FAA LADD list: its owner asked the FAA to limit display of its flights on FAA-derived tracking services. Included here because it is received directly over the air; say so when you mention it.",
+    "is_pia": "True when the address is an FAA Privacy ICAO Address, a temporary address meant to hide the registration. Identity data for it is unreliable; say so when you mention it.",
     "is_miscode": "True when tar1090-db reports the transponder broadcasts an invalid address; the identity is then not meaningful.",
     "latest_callsign": "Most recent flight identification (callsign) broadcast, e.g. SWA2813.",
     "callsigns": "Every distinct callsign broadcast (in this row's scope).",
@@ -86,6 +88,8 @@ COLUMNS = {
     "aircraft_heard": "Confirmed public aircraft of this type ever heard here. Low values mean the type is rare at this receiver.",
     "military_aircraft_heard": "Confirmed military aircraft of this type ever heard here.",
     "wikipedia_article_url": "English Wikipedia article for the type.",
+    "wikipedia_title": "Title of the type's English Wikipedia article.",
+    "wikipedia_description": "Wikipedia's one-line description of the type (e.g. 'airborne command post'). Use it, and cite it, for what an aircraft type is.",
     "image_url": "Wikimedia Commons image of a representative aircraft of the type (not this airframe).",
     "image_file_url": "Wikimedia Commons file page (credit and license) for image_url.",
     # callwords
@@ -126,7 +130,7 @@ COLUMNS = {
     "errors": "Nodes that failed or errored.",
     "warnings": "Nodes that warned.",
     "bytes_billed": "BigQuery bytes billed by the run.",
-    "passed": "True when the run had no errors.",
+    "passed": "pub_dbt_runs: true when the run had no errors. pub_eval_runs: number of questions answered correctly or reference items found.",
     # definitions
     "kind": "metric, model (a public view) or column.",
     "name": "Metric, view or column name.",
@@ -137,6 +141,59 @@ COLUMNS = {
     "formula": "Measure (simple metrics) or numerator / denominator metrics (ratios).",
     "filter": "Filter applied to the measure, as a MetricFlow template.",
     "exported_at": "When the definitions were exported from dbt (UTC).",
+    # eval runs
+    "run_id": "Unique id of the evaluation run.",
+    "score": "Share passed: Q&A answers matching the gold SQL, or reference items an edition covered.",
+    "total": "Questions asked or reference items checked.",
+    "details": "Per question (answer, gold value, pass, tool calls, cost) or per reference item (found or missing).",
+    # notable editions
+    "edition_id": "Unique id of the generated edition.",
+    "week_start": "First Pacific day the edition covers.",
+    "week_end": "Day after the last Pacific day the edition covers (exclusive).",
+    "generated_at": "When the agent wrote the edition (UTC).",
+    "purpose": "weekly (published on the website), eval (written to measure the agent) or test.",
+    "status": "published, rejected (too few statements verified), eval or test.",
+    "model": "OpenRouter model that wrote the edition.",
+    "edition": "The verified edition: title, summary, sections with entries, privacy and caveats. Every statement carries the evidence (tool call, path, value) it was verified against.",
+    "photos": "Wikipedia/Wikimedia Commons photo per type designator, with author and license.",
+    "statements_checked": "Statements in the agent's draft.",
+    "statements_verified": "Statements whose every cited value matched the tool output and appeared in the sentence.",
+    "verification_rate": "statements_verified / statements_checked.",
+    "removed_statements": "Statements the verifier removed, with where they were and why. Shown for transparency; their content is unverified.",
+    "tool_calls": "The agent's tool calls in order: call id, tool, arguments and whether it succeeded.",
+    "tool_call_count": "Number of tool calls the agent made.",
+    "turns": "Model turns in the agent loop.",
+    "prompt_tokens": "Prompt tokens billed by OpenRouter.",
+    "completion_tokens": "Completion tokens billed by OpenRouter.",
+    "cost_usd": "OpenRouter cost of the edition, US dollars.",
+    "seconds": "Wall-clock seconds the agent took.",
+    # notable candidates
+    "window_start": "First Pacific day of the 7-day window (inclusive).",
+    "window_end": "Day after the window's last Pacific day (exclusive). An edition published on a Monday covers window_end = that Monday.",
+    "sightings_7d": "Sightings in the last 7 days.",
+    "days_seen_7d": "Pacific-time days with at least one sighting in the last 7 days.",
+    "messages_7d": "Messages received in the last 7 days.",
+    "max_circling_ratio_7d": "Highest circling_ratio of any sighting in the last 7 days.",
+    "low_away_snapshots_7d": "Snapshots in the last 7 days below 4,500 ft, airborne, more than 5 nm from local airports.",
+    "emergency_code_7d": "True when the aircraft squawked 7500, 7600 or 7700 in the last 7 days.",
+    "max_altitude_baro_ft_7d": "Highest barometric altitude in the last 7 days, feet.",
+    "min_altitude_baro_ft_7d": "Lowest barometric altitude in the last 7 days, feet.",
+    "max_ground_speed_kt_7d": "Highest ground speed in the last 7 days, knots.",
+    "sightings_prior_28d": "Sightings in the 28 days before the last 7: the aircraft's own baseline.",
+    "type_aircraft_heard": "Confirmed public aircraft of this type ever heard here (rarity).",
+    "type_first_seen_this_week": "True when no public aircraft of this type was heard before the last 7 days.",
+    "notable_score": "Ranking score: 1.0 emergency + 0.45 type rarity + 0.20 military + 0.15 vintage civil + 0.20 civil government/public safety + 0.25 unusual path + 0.15 frequency novelty + 0.10 foreign non-airline, x0.3 for airliners without an emergency. Ranks candidates; not a finding.",
+    "vintage_score": "1.0 for a civil, non-airline aircraft the FAA lists as built in 1975 or earlier.",
+    "type_score": "Type rarity component, 0-1: 1.0 when this is the only aircraft of its type heard here, plus 0.3 when the type is new this week.",
+    "military_score": "1.0 when the aircraft is military.",
+    "ownership_score": "1.0 when a civil aircraft is owned or operated by a government or public-safety organization (police, sheriff, federal agency, university).",
+    "foreign_score": "1.0 for a foreign-registered aircraft that is not an airliner.",
+    "path_score": "Circling or low flying relative to the aircraft's own previous 28 days, 0-1. Low for aircraft that do this routinely (flight schools). Null without positions.",
+    "frequency_score": "First-ever, returning or spiking visits, 0-1. Null until about 2026-11-21, when there is enough history.",
+    "emergency_score": "1.0 when the aircraft squawked an emergency code in the last 7 days.",
+    "reasons": "Readable explanations of every signal that contributed to notable_score.",
+    "rank_within_type": "Rank among this week's candidates of the same type (1 = highest score).",
+    "candidates_of_type": "Number of this week's candidates of the same type.",
 }
 
 # Same column name, different scope.
@@ -157,6 +214,11 @@ OVERRIDES = {
     ("pub_aircraft_types", "first_seen_at"): "First time any public aircraft of the type was heard (UTC).",
     ("pub_aircraft_types", "last_seen_at"): "Latest time any public aircraft of the type was heard (UTC).",
     ("pub_definitions", "description"): "Canonical definition text.",
+    ("pub_eval_runs", "started_at"): "When the evaluation ran (UTC).",
+    ("pub_eval_runs", "kind"): "qa (factual questions graded against gold SQL) or edition_recall (reference items an edition covered).",
+    ("pub_eval_runs", "model"): "OpenRouter model evaluated.",
+    ("pub_eval_runs", "cost_usd"): "OpenRouter cost of the run (for edition_recall, of the edition evaluated), US dollars.",
+    ("pub_eval_runs", "seconds"): "Wall-clock seconds the run took.",
 }
 
 
@@ -186,9 +248,10 @@ def main(columns_csv: str) -> None:
     for r in rows:
         by_model.setdefault(r["table_name"], []).append(r["column_name"])
     for model in doc["models"]:
-        cols = by_model.get(model["name"], [])
+        if model["name"] not in by_model:
+            continue  # not in the input: keep its existing column docs
         model["columns"] = [{"name": c, "description": f"{{{{ doc('{block_name(model['name'], c)}') }}}}"}
-                            for c in cols]
+                            for c in by_model[model["name"]]]
     header = "# Column descriptions are generated by scripts/column_docs.py.\n"
     path.write_text(header + yaml.safe_dump(doc, sort_keys=False, width=100, allow_unicode=True))
     print(f"{len(blocks)} doc blocks; {sum(len(v) for v in by_model.values())} public columns documented")

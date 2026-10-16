@@ -136,6 +136,22 @@ class EnrichmentWorkerTests(unittest.TestCase):
         self.assertNotIn("Owner", output[0])
         self.assertEqual(json.loads(output[0])["status"], "skipped")
 
+    def test_unchanged_dataset_fills_fields_added_later(self):
+        class FillingStorage(Storage):
+            def fill_added_fields(self, records):
+                self.filled_from = records
+                return len(records)
+
+        storage = FillingStorage(exists=True)  # dataset imported, fields missing
+        worker = EnrichmentWorker(
+            storage_factory=lambda: storage, download=lambda: registry_zip(), min_records=2,
+            emit=lambda _: None,
+        )
+        summary = worker.process_once()
+        self.assertEqual((summary["status"], summary["filled"]), ("skipped", 2))
+        self.assertEqual(storage.saved, [])
+        self.assertTrue(any("registrant_type IS NULL" in sql for sql, _ in storage.connection.queries))
+
     def test_valid_registry_saved_atomically_via_storage_adapter(self):
         storage = Storage()
         worker = EnrichmentWorker(

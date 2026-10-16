@@ -1,6 +1,6 @@
--- Aircraft for the website, MCP server and agent. Aircraft whose owners asked
--- not to be displayed (FAA LADD) or that use privacy ICAO addresses (PIA)
--- are excluded entirely; private owners' names are never shown.
+-- Aircraft for the website, MCP server and agent. Aircraft on the FAA LADD
+-- list and Privacy ICAO Addresses (PIA) are included and flagged (decided
+-- 2026-10-16, as public ADS-B sites do); private owners' names are never shown.
 select
     address_type,
     address,
@@ -11,10 +11,10 @@ select
     aircraft_class,
     aircraft_kind,
     identity_source,
-    {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization') }} as owner_name,
+    {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type') }} as owner_name,
     case
         when owner is null then 'Unknown'
-        when {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization') }} is not null
+        when {{ public_owner('owner', 'owner_source', 'faa_registrant_is_organization', 'faa_registrant_type') }} is not null
             then coalesce(registrant_category, 'Organization')
         else 'Private or unverified'
     end as owner_category,
@@ -23,6 +23,8 @@ select
     year_manufactured,
     is_military,
     military_rules,
+    is_ladd,
+    is_pia,
     is_miscode,
     latest_callsign,
     callsigns,
@@ -35,4 +37,3 @@ select
     max_altitude_baro_ft,
     positioned_snapshots
 from {{ ref('dim_aircraft') }}
-where not is_ladd and not is_pia

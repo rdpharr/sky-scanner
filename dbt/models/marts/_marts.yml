@@ -34,8 +34,8 @@ models:
     description: >
       One row per aircraft address ever heard: resolved identity, class,
       kind, military evidence and lifetime activity. The canonical answer to
-      "what aircraft is this?". Contains owner names and LADD/PIA aircraft:
-      never expose directly; use pub_aircraft.
+      "what aircraft is this?". Contains every owner name, including private
+      individuals: never expose directly; use pub_aircraft.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -160,3 +160,24 @@ models:
         data_tests: [unique, not_null]
       - name: latest_status
         description: pass, warn, fail or error for tests; pass, warn or error for sources.
+
+  - name: fct_notable_candidates
+    description: >
+      Candidates for the weekly notable-aircraft edition, one set per 7-day
+      window (window_start to window_end, Pacific dates): confirmed public
+      aircraft (LADD/PIA included and flagged) heard in the last 7 days with a positive
+      notable_score, its components and readable reasons. Scores rank
+      candidates for the agent to investigate; they are not the edition.
+    columns:
+      - name: notable_score
+        description: >
+          1.0 x emergency + 0.45 x type rarity + 0.20 x military + 0.15 x
+          vintage civil (built 1975 or earlier) + 0.20 x government/public-safety
+          + 0.25 x unusual path + 0.15 x frequency novelty + 0.10 x foreign
+          non-airline, multiplied by 0.3 for airliners without an emergency.
+      - name: path_score
+        description: Circling or low flying relative to the aircraft's own previous 28 days; null when no positions were decoded this week.
+      - name: frequency_score
+        description: First-ever, returning or spiking visits. Null until var('novelty_min_history_days') of collection (about 2026-11-21).
+      - name: reasons
+        description: Readable explanations of every signal that contributed.

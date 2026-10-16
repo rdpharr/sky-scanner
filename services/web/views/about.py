@@ -15,9 +15,9 @@ FAA registry, tar1090-db, OpenSky and plane-alert-db.
   A replicator streams new rows to BigQuery every 30 seconds.
 - **In Google Cloud:** dbt builds tested, documented models in BigQuery every
   hour. Freshness checks run every 15 minutes, and failures send email alerts.
-- **This site** (Streamlit on Cloud Run) reads only the `public` dataset. Aircraft
-  whose owners opted out of display (FAA LADD) are excluded, and private owners are
-  never named. Tests check this on every build.
+- **This site** (Streamlit on Cloud Run) reads only the `public` dataset. Private
+  owners are never named, and aircraft on the FAA's LADD list or using privacy
+  addresses are labeled. Tests check this on every build.
 
 Source code, design decisions and the plan are on
 [GitHub](https://github.com/rdpharr/sky-scanner).

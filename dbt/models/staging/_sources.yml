@@ -59,3 +59,12 @@ sources:
         description: One row per model, test, seed or source in each run, with its status.
       - name: dbt_definitions
         description: Metric, model and column definitions exported from dbt's manifest after each build.
+
+  - name: ai
+    description: Outputs of the notable-aircraft agent (jobs/notable), written by sky-notable.
+    schema: ai
+    tables:
+      - name: notable_editions
+        description: One row per generated edition (weekly, eval or test) with the verified edition, the draft, the verification report, photos and the full tool trace.
+      - name: eval_runs
+        description: "Agent evaluation runs (jobs/notable/evals): Q&A accuracy against gold SQL and notable-edition recall against the owner's reference week."

@@ -42,6 +42,12 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(server.jsonable({"t": t, "n": Decimal("1.5"), "l": [t]}),
                          {"t": "2026-10-16T00:00:00+00:00", "n": 1.5, "l": ["2026-10-16T00:00:00+00:00"]})
 
+    def test_rounds_measurements_but_not_coordinates(self):
+        self.assertEqual(server.jsonable({"kt": 454.881866, "alt": 27000.0, "nm": 8.68890993, "ratio": 1.0000152,
+                                          "latitude": 36.3456, "longitude": -115.3512}),
+                         {"kt": 455, "alt": 27000, "nm": 8.7, "ratio": 1.0,
+                          "latitude": 36.3456, "longitude": -115.3512})
+
     def test_clamp_bounds_tool_arguments(self):
         self.assertEqual(server.clamp(10_000, 1, 365), 365)
         self.assertEqual(server.clamp(-5, 1, 365), 1)
@@ -56,11 +62,28 @@ class HelperTests(unittest.TestCase):
         server._calls.clear()
 
 
+class DateRangeTests(unittest.TestCase):
+    def test_defaults_to_the_last_seven_complete_days(self):
+        start, end = server.date_range("", "")
+        from datetime import date
+        self.assertEqual((date.fromisoformat(end) - date.fromisoformat(start)).days, 7)
+
+    def test_end_date_is_inclusive(self):
+        # "26 September to 2 October" covers 7 days, ending before 3 October.
+        self.assertEqual(server.date_range("2026-09-26", "2026-10-02"), ("2026-09-26", "2026-10-03"))
+        self.assertEqual(server.date_range("2026-10-02", "2026-10-02"), ("2026-10-02", "2026-10-03"))
+
+    def test_rejects_bad_ranges(self):
+        for start, end in (("2026-10-03", "2026-09-26"), ("2026-01-01", "2026-10-01"), ("yesterday", "")):
+            with self.assertRaises(ToolError):
+                server.date_range(start, end)
+
+
 class ToolTests(unittest.TestCase):
     def test_every_tool_is_read_only(self):
         import asyncio
         tools = asyncio.run(server.mcp.list_tools())
-        self.assertGreaterEqual(len(tools), 14)
+        self.assertGreaterEqual(len(tools), 19)
         for tool in tools:
             self.assertTrue(tool.annotations.read_only_hint, tool.name)
             self.assertFalse(tool.annotations.destructive_hint, tool.name)

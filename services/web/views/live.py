@@ -19,7 +19,7 @@ TRAIL_MINUTES = 10
 
 st.title("Live")
 st.caption("Aircraft heard by a receive-only ADS-B/UAT station near Las Vegas. "
-           "Aircraft whose owners opted out of display (FAA LADD) are never shown.")
+           "Owners of privately registered aircraft are never named.")
 
 if "live_until" not in st.session_state or st.button("Resume live updates"):
     st.session_state.live_until = time.time() + LIVE_MINUTES * 60

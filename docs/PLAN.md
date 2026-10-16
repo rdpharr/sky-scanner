@@ -35,13 +35,12 @@ weight there rather than on scale.
 | DNS | Cloudflare. Cloud Run CNAMEs must be **DNS-only (grey cloud)** so Google can issue the managed certificate. |
 | Alerts | Google Cloud alerting → email |
 | AI page | Weekly "Notable aircraft" edition. Agent model `xiaomi/mimo-v2.6-pro` via OpenRouter ($0.435 / $0.87 per million tokens, supports tool calls) |
-| Public data | FAA, OpenSky, tar1090-db, plane-alert-db, VRS and War Watch Intel, all with attribution. Excludes LADD/PIA aircraft, individual owners' names and the receiver location. |
+| Public data | FAA, OpenSky, tar1090-db, plane-alert-db, VRS and War Watch Intel, all with attribution. **LADD and PIA aircraft are included and flagged** (`is_ladd`, `is_pia`; decided 2026-10-16, reversing the earlier exclusion, as public ADS-B sites do). Private owners' names are never shown; receiver location only as "northwest Las Vegas". |
 | Infrastructure | Terraform from day 1; one service account per component; GitHub signs in to Google Cloud without stored keys (Workload Identity Federation) |
 | Cloud region | us-central1 (supports Cloud Run custom domains) |
 | CI/CD | GitHub Actions for tests and deployment only; scheduled work runs in Google Cloud |
 
 ### Open items
-- Confirm that LADD/PIA aircraft and individual owners' names stay out of public views. This is currently assumed.
 - Alert email address: rdpharr@gmail.com unless told otherwise.
 - Grader model for evals: proposed `anthropic/claude-haiku-5.5`, from a different family than the agent.
 
@@ -318,7 +317,7 @@ week held 2,363 confirmed aircraft and 3,604 sightings.
 | **64% of sightings have no position**, so path features cover only about a third of traffic. | A path component is null (not zero) below a minimum number of positioned snapshots. Missing positions never lower a score. |
 | **45% of this week's aircraft are "first ever"**, because collection only began on Sep 26. "Returned after an absence" matched nothing. | Gate aircraft-level novelty signals until there are ≥ 8 weeks of history (about Nov 21). Until then, use type-level novelty and FAA fleet rarity. |
 | **Type rarity is the strongest signal.** Types seen on only 1–2 airframes surfaced the Air Force VC-25A 92-9000, an F/A-18F Super Hornet and a K-MAX helicopter. | Type rarity carries the most weight for now. Add FAA registered-fleet counts so rare-here and rare-nationally can be told apart. |
-| **About 10% of the week's aircraft are LADD/PIA** (232 of 2,363). The K-MAX was LADD-flagged. | The public layer removes them before scoring, so the agent never sees them. |
+| **About 10% of the week's aircraft are LADD/PIA** (232 of 2,363). The K-MAX was LADD-flagged. | Included everywhere public and flagged (`is_ladd`, `is_pia`); the agent must say so when it mentions one. (Originally removed; changed by the owner's decision in Phase 6.) |
 | tar1090-db's "interesting" flag never appears in this data. | Drop it as a feature. |
 | OpenSky lists American Airlines as the operator of a privately registered PA-27 Aztec, which is stale or wrong. | Operator and owner values are **attributed claims**, resolved by source precedence. The agent must name its source, and the verifier checks that source. |
 | Government-looking FAA owners (police, county, federal, university) match 18 aircraft a week by name pattern. | Use name patterns until the FAA `type_registrant` field is imported, then switch to the registrant category. |
@@ -617,23 +616,77 @@ check that every public column is described.
 Cyclone". Add curated names for common GA types (C185 "Cessna 185
 Skywagon") and prefer tar1090-db's model for military variants.
 
-### Phase 6: Notable aircraft agent and evals
-- Agent loop (OpenRouter, MiMo-V2.6-Pro) over the public MCP endpoint;
-  verifier; `ai.notable_editions`; weekly schedule; Notable page.
-- Q&A eval (~25 questions, fixed "golden week") and edition eval; model
-  comparison; results page.
-- **Owner:** create a dedicated OpenRouter key with a credit limit and add
-  it with `gcloud secrets versions add openrouter-api-key --data-file=-`.
+### Phase 6: Notable aircraft agent and evals — in progress (2026-10-16)
+**Built:**
+- **Template:** the owner's reference report "Notable aircraft over
+  northwest Las Vegas, 26 Sep to 2 Oct 2026" (Google Doc) is the template
+  for the page and the gold standard for edition recall.
+- **Candidates:** `fct_notable_candidates`, one candidate set per 7-day
+  window, scored from rarity as of the window, military, vintage civil,
+  civil government, unusual path, frequency and foreign registration.
+  `pub_notable_candidates`.
+- **MCP tools for the edition:** `week_summary`, `callsign_activity`,
+  `operator_fleets`, `busiest_areas`, and date ranges on every time-based
+  tool. Output measurements are rounded (coordinates are not).
+- **`jobs/notable`:** an OpenRouter agent (MiMo-V2.6-Pro, low reasoning
+  effort) investigates through the public MCP endpoint and writes an
+  outline citing call ids. Then it writes the front matter, each section
+  intro and each entry in parallel (6 at a time) from only the cited
+  results. Small parts removed output truncation, and a failed part costs
+  one entry, not a section.
+- **The verifier:** every statement must cite tool calls. Each cited value
+  must match the call's real output (rounding only) and appear in the
+  sentence (digits, number words or a close paraphrase). Entry titles must
+  contain the data's type name or they are replaced. Failures are removed
+  and listed.
+- **Storage and pages:** editions go to `ai.notable_editions` (verified
+  edition, draft, outline, report, photos with Commons credits, full trace,
+  tokens, cost), shown through `pub_notable_editions` on the Notable page
+  ("Show evidence", "How this edition was made"). Evals go to
+  `ai.eval_runs` → `pub_eval_runs` → the Agent evals page.
+- **Weekly job:** Cloud Run job `notable-edition`, Mondays 06:00 Pacific
+  (Terraform pending apply).
 
-**Demo:**
-- An edition generated on demand.
-- Its full tool-call trace walked through.
-- The verifier's report: which claims passed, which were removed and why.
-- The published page.
-- Eval scores per model, with token cost.
+**Findings that changed the design:**
+- **Verifier strictness:** its first version removed 44% of statements.
+  Most were correct sentences written with number words, paraphrases or raw
+  decimals. Fixing the verifier and having tools round their output took
+  the same draft to 86% and new drafts to 81%. The real catches that remain
+  include a speed from the wrong row and an invented field.
+- **Speed:** an edition takes ~14 min and $0.19. The time is the
+  provider's ~34 tokens/s plus ~8 s fixed latency per request, not the
+  tools (77 s). Ultraspeed is 3x faster at ~20x the cost; Pro stays for the
+  unattended weekly job.
+- **Recall against the reference week was 60% (15/25).** Military 12/14,
+  but rare and vintage civil aircraft 0/6. Scoring ranked any military
+  aircraft above a type heard only once, so the DC-9, OV-10 and L-39s fell
+  outside the candidates the agent read. Reweighted (rarity 0.45, military
+  0.20, new vintage signal) and separate military and civil candidate
+  lists.
+- **Q&A eval (15 questions on the reference week, graded against SQL):**
+  Claude Haiku 5.5 15/15 in 28 s for $0.024; MiMo-V2.6-Pro 10/15 in 104 s
+  for $0.046. All five MiMo misses were weekly totals: given "26 September
+  to 2 October" it passed end_date 2 October to tools whose end date was
+  exclusive. Tools now take inclusive dates. **After: MiMo 15/15** (84 s,
+  $0.040); Haiku 14/15 (it miscounted distinct types from a list it had
+  fetched correctly).
+- **Writing a section per request failed on big sections.** After the
+  reweight, three of six sections came back cut off or without valid JSON
+  (a 9-entry military section hit the output limit), and recall fell to
+  32%. Writing each entry in its own request fixed it.
 
-**Done when:** the first edition is live and the eval results are
-published.
+**Recall:**
+
+| Edition | Change | Recall | Verified | Entries | Time | Cost |
+|---|---|---|---|---|---|---|
+| `b534c3ae` | first full edition | 15/25 (60%) | 81% | 17 | 14 min | $0.19 |
+| `9c32d198` | reweighted candidates, a section per request | 8/25 (32%) | 77% | 8 | 19 min | $0.22 |
+| `5d02d041` | an entry per request, inclusive dates | **19/25 (76%)** | 81% | 20 | 7.6 min | $0.28 |
+
+Still missed: C-37B, UH-60s, L-39s, the civilian S-70, the MGM Resorts
+E190 and the TransMedics Phenom 300s (corporate fleets).
+
+**Left:** `terraform apply` for the weekly job; first published edition.
 
 ### Phase 7: Website polish and repository cleanup
 Comes before launch: the repository goes public and the application goes

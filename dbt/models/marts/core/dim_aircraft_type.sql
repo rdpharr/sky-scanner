@@ -12,6 +12,8 @@ select
     min(a.first_seen_at) as first_seen_at,
     max(a.last_seen_at) as last_seen_at,
     any_value(img.article_url) as wikipedia_article_url,
+    any_value(img.article_title) as wikipedia_title,
+    any_value(img.article_description) as wikipedia_description,
     any_value(img.image_url) as image_url,
     any_value(img.file_url) as image_file_url
 from {{ ref('dim_aircraft') }} as a
