@@ -11,25 +11,25 @@ models:
         data_tests: [unique, not_null]
       - name: latitude
         data_tests:
-          - dbt_utils.accepted_range: {min_value: -90, max_value: 90, config: {severity: warn}}
+          - dbt_utils.accepted_range: {arguments: {min_value: -90, max_value: 90}, config: {severity: warn}}
       - name: longitude
         data_tests:
-          - dbt_utils.accepted_range: {min_value: -180, max_value: 180, config: {severity: warn}}
+          - dbt_utils.accepted_range: {arguments: {min_value: -180, max_value: 180}, config: {severity: warn}}
       - name: altitude_baro_ft
         data_tests:
-          - dbt_utils.accepted_range: {min_value: -1500, max_value: 60000, config: {severity: warn}}
+          - dbt_utils.accepted_range: {arguments: {min_value: -1500, max_value: 60000}, config: {severity: warn}}
       - name: ground_speed_kt
         data_tests:
-          - dbt_utils.accepted_range: {min_value: 0, max_value: 800, config: {severity: warn}}
+          - dbt_utils.accepted_range: {arguments: {min_value: 0, max_value: 800}, config: {severity: warn}}
       - name: squawk
         data_tests:
           - dbt_utils.expression_is_true:
-              expression: "is null or regexp_contains(squawk, r'^[0-7]{4}$')"
+              arguments:
+                expression: "is null or regexp_contains(squawk, r'^[0-7]{4}$')"
               config: {severity: warn}
       - name: message_count
         data_tests:
-          - dbt_utils.accepted_range: {min_value: 1}
-
+          - dbt_utils.accepted_range: {arguments: {min_value: 1}}
   - name: dim_aircraft
     description: >
       One row per aircraft address ever heard: resolved identity, class,
@@ -38,7 +38,8 @@ models:
       never expose directly; use pub_aircraft.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns: [address_type, address]
+          arguments:
+            combination_of_columns: [address_type, address]
     columns:
       - name: is_confirmed
         description: >
@@ -54,15 +55,16 @@ models:
           Other, or Unidentified (no designator).
         data_tests:
           - accepted_values:
-              values: ['Narrow-body / regional jet', 'Wide-body jet', 'Business jet', 'Turboprop',
-                       'Piston', 'Helicopter', 'Other', 'Unidentified']
+              arguments:
+                values: ['Narrow-body / regional jet', 'Wide-body jet', 'Business jet', 'Turboprop',
+                         'Piston', 'Helicopter', 'Other', 'Unidentified']
       - name: aircraft_kind
         description: >
           Military (any military rule fired); Airline (airline callsign
           prefix, airline-like owner or operator name, or an airliner owned
           by a lessor or with no owner); otherwise Other.
         data_tests:
-          - accepted_values: {values: [Military, Airline, Other]}
+          - accepted_values: {arguments: {values: [Military, Airline, Other]}}
       - name: type_name
         description: Readable type name (curated list, else Doc 8643 manufacturer and model, else the source's description).
       - name: identity_source
@@ -97,7 +99,7 @@ models:
         data_tests: [unique, not_null]
       - name: address
         data_tests:
-          - relationships: {to: ref('dim_aircraft'), field: address}
+          - relationships: {arguments: {to: ref('dim_aircraft'), field: address}}
       - name: duration_minutes
         description: Minutes from first to last reception in the sighting.
       - name: positioned_snapshots
@@ -122,7 +124,8 @@ models:
       changes and outages do not distort comparisons.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns: [day, band_mhz]
+          arguments:
+            combination_of_columns: [day, band_mhz]
     columns:
       - name: identification_rate
         description: Share of the day's confirmed aircraft that any identity source identifies.
@@ -141,9 +144,19 @@ models:
     description: Seconds spent listening on each band per UTC hour, clipped to hour boundaries.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns: [receiver_id, hour_start]
+          arguments:
+            combination_of_columns: [receiver_id, hour_start]
     columns:
       - name: uptime_ratio
         description: Share of the hour spent listening on either band. Retuning keeps it below 1.0 even with no outage.
         data_tests:
-          - dbt_utils.accepted_range: {min_value: 0, max_value: 1.0001}
+          - dbt_utils.accepted_range: {arguments: {min_value: 0, max_value: 1.0001}}
+  - name: ops_dbt_runs
+    description: Scheduled dbt runs (hourly build, daily build, freshness) with their error and warning counts and bytes billed.
+  - name: ops_check_status
+    description: Current state of every test and source-freshness check over the last 7 days of scheduled runs.
+    columns:
+      - name: unique_id
+        data_tests: [unique, not_null]
+      - name: latest_status
+        description: pass, warn, fail or error for tests; pass, warn or error for sources.

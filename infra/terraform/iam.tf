@@ -8,6 +8,7 @@ locals {
     notable   = "Notable-aircraft agent: reads public, writes ai"
     ci-plan   = "GitHub Actions on pull requests: terraform plan, dbt CI"
     ci-deploy = "GitHub Actions on main: push images, deploy Cloud Run"
+    scheduler = "Cloud Scheduler: starts the scheduled Cloud Run jobs"
   }
 
   # dataset => { service account => legacy role }. Legacy READER/WRITER avoid

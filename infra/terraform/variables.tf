@@ -30,3 +30,21 @@ variable "query_quota_mib_per_user_per_day" {
   type        = number
   default     = 102400 # 100 GiB
 }
+
+variable "dbt_runner_image" {
+  description = "Image for the first deploy of the dbt jobs. Later images are deployed by CI; Terraform ignores the difference."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/dbt-runner:phase3-1792112448"
+}
+
+variable "web_image" {
+  description = "Image for the first deploy of the website. Later images are deployed by CI."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/web:phase4-1792118058"
+}
+
+variable "web_domain" {
+  description = "Custom domain for the website. Leave empty until the domain is verified in Google Search Console by the account running Terraform."
+  type        = string
+  default     = ""
+}

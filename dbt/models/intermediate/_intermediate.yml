@@ -17,7 +17,8 @@ models:
       identity.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns: [address_type, address]
+          arguments:
+            combination_of_columns: [address_type, address]
     columns:
       - name: designator
         description: ICAO type designator. FAA model text mapped by faa_model_type_patterns first, then tar1090-db, OpenSky, plane-alert-db.
@@ -44,3 +45,5 @@ models:
         description: Every rule that fired, in the order listed above. Empty for civil aircraft.
       - name: military_operator
         description: plane-alert-db operator, else the operator-code name, else US Coast Guard for the callsign convention.
+  - name: int_privacy_hidden_addresses
+    description: Every address tar1090-db currently flags as LADD or PIA, heard or not. Used to filter live data that has not reached dim_aircraft.

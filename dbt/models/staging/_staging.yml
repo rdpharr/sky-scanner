@@ -22,7 +22,7 @@ models:
       - name: band_mhz
         description: Receive band in MHz (1090 or 978).
         data_tests:
-          - accepted_values: {values: [1090, 978], quote: false}
+          - accepted_values: {arguments: {values: [1090, 978], quote: false}}
       - name: message_count
         description: Valid messages received from this aircraft in the bucket.
       - name: callsign
@@ -69,7 +69,7 @@ models:
       - name: source_name
         description: faa_registry (official), opensky (crowdsourced), tar1090_db (community) or plane_alert_mil (military list).
         data_tests:
-          - accepted_values: {values: [faa_registry, opensky, tar1090_db, plane_alert_mil]}
+          - accepted_values: {arguments: {values: [faa_registry, opensky, tar1090_db, plane_alert_mil]}}
       - name: registry_status
         description: present, or absent when a source stopped listing the aircraft.
       - name: registrant_type

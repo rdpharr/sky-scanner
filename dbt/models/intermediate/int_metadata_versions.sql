@@ -1,3 +1,5 @@
+{{ config(tags=["daily"]) }}
+-- Rebuilt daily (the metadata it reads reloads once a day); 900k+ rows.
 -- Every identity version per source, with the period it was current.
 select
     *,

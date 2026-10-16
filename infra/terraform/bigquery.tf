@@ -22,10 +22,11 @@ resource "google_bigquery_dataset" "this" {
   delete_contents_on_destroy = false
 }
 
-# Views in `public` may read the datasets they are built from without their
-# readers getting access to those datasets (authorized dataset).
+# Views in `public` may read the datasets they are built from (raw for the
+# live view, analytics, ai) without their readers getting access to those
+# datasets (authorized dataset).
 resource "google_bigquery_dataset_access" "public_views" {
-  for_each = toset(["analytics", "ai"])
+  for_each = toset(["raw", "analytics", "ai"])
 
   dataset_id = google_bigquery_dataset.this[each.key].dataset_id
   dataset {

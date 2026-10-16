@@ -30,3 +30,15 @@ models:
     description: Listening seconds per band per UTC hour.
   - name: pub_callword_lookups
     description: War Watch Intel callsign-family lookups for military callwords. Supporting evidence, not unit identification.
+  - name: pub_data_health
+    description: Every data check with its latest status and last week's failure counts, for the Data health page.
+  - name: pub_dbt_runs
+    description: Scheduled dbt runs and whether they passed.
+  - name: pub_live_snapshots
+    description: >
+      Snapshots from the last 30 minutes, read directly from raw for the live
+      map (seconds old). Excludes LADD/PIA addresses. Identity columns
+      (registration, type_name, ...) are null for aircraft first heard since
+      the last hourly build.
+  - name: pub_definitions
+    description: Canonical definitions of every metric and of every public view and column, exported from dbt after each build.

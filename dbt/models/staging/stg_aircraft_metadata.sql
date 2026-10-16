@@ -1,3 +1,4 @@
+{{ config(tags=["daily"]) }}
 -- plane-alert-db marks unknown values with runs of "?"; treat them as null.
 {% set text_columns = ['registration', 'manufacturer', 'model', 'aircraft_type',
     'registered_owner', 'operator', 'icao_type_code', 'operator_icao', 'country',

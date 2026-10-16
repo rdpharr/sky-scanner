@@ -460,19 +460,49 @@ they are documented only on the underlying mart (e.g.
 `pub_aircraft.aircraft_class`). Share column docs with doc blocks and add a
 check that every public column is described.
 
-### Phase 3: Scheduling, data quality and alerting
-- `dbt_runner` Cloud Run Job: hourly build, freshness checks every 15
-  minutes. It loads run results into `analytics` ops tables.
-- Log-based alert policies → email. Job-failure alerts.
+### Phase 3: Scheduling, data quality and alerting — done (2026-10-16)
+- `jobs/dbt_runner/run.py` in one image, three Cloud Run jobs:
+  - `dbt-hourly` (:05 past each hour): build excluding models tagged `daily`.
+  - `dbt-daily` (06:35 UTC): build everything.
+  - `dbt-freshness` (every 15 min): source freshness.
+- Cloud Scheduler starts the jobs as `sky-scheduler`, which may only invoke
+  them.
+- The runner logs one JSON line per failed check (ERROR) or warning
+  (WARNING). It saves every result to `analytics.dbt_invocations` and
+  `analytics.dbt_node_results`, and exports metric, model and column
+  definitions to `analytics.dbt_definitions`. It fails the job only if dbt
+  cannot run, so one problem sends one alert.
+- Four email alert policies (`infra/terraform/alerting.tf`): data check
+  failed, data stopped arriving, scheduled job failed, freshness checks
+  stopped running. Warnings are not emailed; they appear on the Data health
+  page.
+- Cost work: `fct_snapshots` merges only the last 2 days of partitions, with
+  the cutoff computed first so BigQuery can prune (190 MB → ~20 MB). The
+  900k-row version history moved to the daily build.
+- Measured cost: hourly build ~700 MB, freshness 31 MB, daily ~1.1 GB, about
+  610 GB/month of the 1 TB free tier. Most of it is the 10 MB minimum across
+  ~40 tests. Before launch, consider running tests every 2–3 hours or
+  making sightings incremental, since full-history models grow linearly.
 
-**Demo:**
-- Scheduled executions listed in Cloud Run.
-- `ops_dbt_runs` and `ops_test_results` queried live.
-- **A real alert:** stop the replicator until snapshot freshness errors.
-  The email arrives in your inbox. Restart it and the next run passes.
-  Record the timeline.
+**Demo results (live):**
+- All three jobs succeeded on Cloud Run: freshness 3 nodes, hourly 73,
+  daily 79, 0 errors. Each run took about 3–5 minutes, of which dbt itself
+  took 28–55 s; the rest is container start-up.
+- **Alert drill (2026-10-16 UTC):**
 
-**Done when:** an alert email has arrived and recovery was confirmed.
+  | Time | Event |
+  |---|---|
+  | 02:24:03 | Newest capture interval reached BigQuery |
+  | 02:24:28 | Replicator stopped (receiving and Postgres kept running) |
+  | 02:31:46 | Freshness: `capture_intervals` 8 min old → warning, no email (as designed) |
+  | 02:46:23 | Freshness: `capture_intervals` 22 min old → error logged |
+  | 02:46:59 | Email "Sky Scanner: no new raw.capture_intervals data" received (36 s after the error) |
+  | 02:49:12 | Replicator restarted |
+  | ~02:51 | Caught up: all 46 snapshots from the outage in BigQuery, matching Postgres |
+  | 02:54:24 | Freshness: 0 errors, 0 warnings |
+
+- Follow-ups: give alert policies a severity (emails say "No severity").
+  The alert email lands in Gmail's Updates tab.
 
 ### Phase 4: Website (Streamlit)
 - Live, Aircraft log and Detail pages on Cloud Run; caching; Definitions

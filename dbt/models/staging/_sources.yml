@@ -11,26 +11,29 @@ sources:
     tables:
       - name: aircraft_snapshots
         description: One row per aircraft, receive frequency and UTC-aligned 15-second bucket in which it was heard.
-        loaded_at_field: written_at
-        freshness:
-          # Traffic is never absent for an hour near Las Vegas: silence
-          # means the radio is not decoding (antenna, PortaPack, HackRF).
-          warn_after: {count: 20, period: minute}
-          error_after: {count: 60, period: minute}
+        config:
+          loaded_at_field: written_at
+          freshness:
+            # Traffic is never absent for an hour near Las Vegas: silence
+            # means the radio is not decoding (antenna, PortaPack, HackRF).
+            warn_after: {count: 20, period: minute}
+            error_after: {count: 60, period: minute}
       - name: capture_intervals
         description: Actual listening turns per band. Written at the end of every turn, so silence means the receiver process or replication is down.
-        loaded_at_field: written_at
-        freshness:
-          warn_after: {count: 5, period: minute}
-          error_after: {count: 15, period: minute}
+        config:
+          loaded_at_field: written_at
+          freshness:
+            warn_after: {count: 5, period: minute}
+            error_after: {count: 15, period: minute}
       - name: receivers
         description: Receiver identifiers. Location is deliberately not replicated.
       - name: aircraft_metadata
         description: Versioned identity records from FAA, OpenSky, tar1090-db and plane-alert-db. A new version is written only when a source's values change.
-        loaded_at_field: _replicated_at
-        freshness:
-          warn_after: {count: 26, period: hour}
-          error_after: {count: 50, period: hour}
+        config:
+          loaded_at_field: _replicated_at
+          freshness:
+            warn_after: {count: 26, period: hour}
+            error_after: {count: 50, period: hour}
       - name: enrichment_imports
         description: One row per imported source dataset, with its hash and how many versions it changed.
       - name: military_operator_codes
@@ -41,4 +44,18 @@ sources:
         description: One representative Wikipedia article and Wikimedia Commons image per ICAO type designator.
       - name: doc8643_types
         description: ICAO Doc 8643 aircraft type designators (OpenSky copy), loaded daily as text.
-        loaded_at_field: "CURRENT_TIMESTAMP()"
+        config:
+          loaded_at_field: "CURRENT_TIMESTAMP()"
+
+  - name: ops
+    description: >
+      Results of scheduled dbt runs, written by jobs/dbt_runner/run.py (not by
+      dbt models). One row per run and one per node per run.
+    schema: analytics
+    tables:
+      - name: dbt_invocations
+        description: One row per scheduled dbt run (hourly, daily, freshness).
+      - name: dbt_node_results
+        description: One row per model, test, seed or source in each run, with its status.
+      - name: dbt_definitions
+        description: Metric, model and column definitions exported from dbt's manifest after each build.

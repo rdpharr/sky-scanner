@@ -8,3 +8,7 @@ union all
 select 'pub_sightings', address from {{ ref('pub_sightings') }} inner join hidden using (address_type, address)
 union all
 select distinct 'pub_snapshots', address from {{ ref('pub_snapshots') }} inner join hidden using (address_type, address)
+union all
+select distinct 'pub_live_snapshots', l.address
+from {{ ref('pub_live_snapshots') }} as l
+inner join {{ ref('int_privacy_hidden_addresses') }} as h using (address_type, address)
