@@ -11,6 +11,7 @@ locals {
 }
 
 resource "google_monitoring_alert_policy" "data_check_failed" {
+  severity              = "ERROR"
   display_name          = "Sky Scanner: data quality check failed"
   combiner              = "OR"
   notification_channels = [google_monitoring_notification_channel.email.name]
@@ -46,6 +47,7 @@ resource "google_monitoring_alert_policy" "data_check_failed" {
 }
 
 resource "google_monitoring_alert_policy" "source_stale" {
+  severity              = "CRITICAL"
   display_name          = "Sky Scanner: data stopped arriving"
   combiner              = "OR"
   notification_channels = [google_monitoring_notification_channel.email.name]
@@ -84,6 +86,7 @@ resource "google_monitoring_alert_policy" "source_stale" {
 }
 
 resource "google_monitoring_alert_policy" "job_failed" {
+  severity              = "ERROR"
   display_name          = "Sky Scanner: scheduled job failed"
   combiner              = "OR"
   notification_channels = [google_monitoring_notification_channel.email.name]
@@ -117,6 +120,7 @@ resource "google_monitoring_alert_policy" "job_failed" {
 }
 
 resource "google_monitoring_alert_policy" "freshness_checks_stopped" {
+  severity              = "ERROR"
   display_name          = "Sky Scanner: freshness checks stopped running"
   combiner              = "OR"
   notification_channels = [google_monitoring_notification_channel.email.name]

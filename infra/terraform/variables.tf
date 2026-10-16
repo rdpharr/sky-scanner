@@ -44,7 +44,13 @@ variable "web_image" {
 }
 
 variable "web_domain" {
-  description = "Custom domain for the website. Leave empty until the domain is verified in Google Search Console by the account running Terraform."
+  description = "Custom domain for the website. Must be verified in Google Search Console by the account running Terraform; empty disables the mapping."
   type        = string
-  default     = ""
+  default     = "skyscanner.pharrhomelab.com"
+}
+
+# Kept out of the public repository: set it in terraform.tfvars (ignored).
+variable "owner_email" {
+  description = "Google account of the project owner, allowed to impersonate the public-facing service accounts to test what they can read."
+  type        = string
 }

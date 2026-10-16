@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "services/web/.venv/bin/streamlit",
+      "runtimeArgs": ["run", "services/web/app.py", "--server.port=8501", "--server.address=127.0.0.1", "--server.headless=true", "--browser.gatherUsageStats=false"],
+      "port": 8501
+    }
+  ]
+}

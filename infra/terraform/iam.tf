@@ -77,3 +77,13 @@ resource "google_storage_bucket_iam_member" "plan_reads_state" {
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.this["ci-plan"].email}"
 }
+
+# The owner may act as the public-facing accounts, to verify the access tiers
+# by querying as them (e.g. that sky-web cannot read analytics).
+resource "google_service_account_iam_member" "owner_tests_public_accounts" {
+  for_each = toset(["web", "mcp", "notable"])
+
+  service_account_id = google_service_account.this[each.key].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:${var.owner_email}"
+}

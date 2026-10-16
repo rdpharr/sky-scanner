@@ -504,22 +504,56 @@ check that every public column is described.
 - Follow-ups: give alert policies a severity (emails say "No severity").
   The alert email lands in Gmail's Updates tab.
 
-### Phase 4: Website (Streamlit)
-- Live, Aircraft log and Detail pages on Cloud Run; caching; Definitions
-  and Data health pages.
-- Domain mapping for `skyscanner.pharrhomelab.com`.
-- **Owner:** verify `pharrhomelab.com` in Google Search Console (TXT
-  record in Cloudflare); add the DNS-only CNAME `skyscanner` →
-  `ghs.googlehosted.com`.
+### Phase 4: Website (Streamlit) — done (2026-10-16)
+- `services/web` (Streamlit 1.66) on Cloud Run service `web` as `sky-web`.
+  One warm instance, CPU throttled when idle, session affinity for
+  websockets.
+- Pages: Live, Aircraft log (with per-aircraft detail), Definitions, Data
+  health, About.
+- **Live data:** `pub_live_snapshots` reads the last 30 minutes of raw data
+  directly, so the map is seconds old rather than up to an hour. LADD/PIA
+  aircraft are excluded via `int_privacy_hidden_addresses`, which lists
+  every tar1090-flagged address, heard or not. The `public` dataset is
+  authorized on `raw` for this view.
+- **Cost guards:** every query has `maximum_bytes_billed` (500 MB) and is
+  cached for 15 s to 1 h. The live map stops polling after 10 minutes
+  without interaction.
+- **Definitions:** the runner exports dbt's metric, model and column
+  definitions to `analytics.dbt_definitions`; the site reads them through
+  `pub_definitions`.
+- **Data health:** reads `pub_data_health` and `pub_dbt_runs` (views, so
+  each freshness run shows within 5 minutes) and receiver uptime.
+- **Domain:** Cloud Run domain mapping (Terraform). The Cloudflare CNAME
+  `skyscanner` → `ghs.googlehosted.com` (DNS only) was created through the
+  Cloudflare API with a token scoped to DNS edits on this zone, stored
+  outside the repo in `~/.config/sky-scanner/cloudflare-token`. Move the
+  record into Terraform in Phase 8.
+- **Owner impersonation:** the owner holds token-creator on `sky-web`,
+  `sky-mcp` and `sky-notable` so the access tiers can be tested as those
+  accounts. `infra/check_access_tiers.sh` does this.
 
-**Demo:**
-- The live URL, with the map updating as aircraft move.
-- A real aircraft's detail page checked against the same query run by
-  hand.
-- The web service account trying to read `analytics` and being refused.
-- Cold-start time and bytes billed per page load.
+**Demo results (live):**
+- The site serves from `https://web-5hakmcrcrq-uc.a.run.app` in about
+  0.14 s. Through `sky-web`, the live map shows aircraft from raw data.
+- **Detail page vs SQL:** on the VC-25A 92-9000, all 12 fields and the
+  sighting count match a hand-written query.
+- **A bug the demo caught:** the detail page crashed on missing years
+  because BigQuery INT64 nulls arrive as `pd.NA`. Fixed, with
+  `services/web/tests/test_fmt.py`.
+- **Access tiers** (`infra/check_access_tiers.sh`): `sky-web`, `sky-mcp`
+  and `sky-notable` can read `public.pub_aircraft` and
+  `public.pub_live_snapshots`. They are refused `analytics.dim_aircraft`
+  (owner names, LADD) and raw tables read directly.
+- **Cost per query:** 0.2–0.6 s each. The live map bills 31.5 MB per
+  refresh (three tables at the 10 MB minimum), so one 10-minute session
+  costs up to ~1.3 GB. Other pages bill 5–21 MB per query and are cached.
 
-**Done when:** the site is up on its own domain over HTTPS.
+**For Phase 7:**
+- Prefer the more specific military type name (tar1090-db's "Boeing
+  VC-25A" over Doc 8643's "Boeing 747-200"; the LAN page has the same
+  issue).
+- Narrow metric labels; the class chart's truncated labels.
+- Load the `developing-with-streamlit` skill before UI work.
 
 ### Phase 5: MCP server
 - Tools from §4.7 on Cloud Run at `mcp.skyscanner.pharrhomelab.com/mcp`,
