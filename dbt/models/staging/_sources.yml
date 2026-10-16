@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Tables replicated unmodified from the home receiver's Postgres database
+      by edge/sky_scanner/replicator.py. Snapshots and capture intervals
+      stream in every ~30 s; reference tables reload daily. Streamed tables
+      can contain duplicate keys; staging removes them.
+    schema: raw
+    tables:
+      - name: aircraft_snapshots
+        description: One row per aircraft, receive frequency and UTC-aligned 15-second bucket in which it was heard.
+        loaded_at_field: written_at
+        freshness:
+          # Traffic is never absent for an hour near Las Vegas: silence
+          # means the radio is not decoding (antenna, PortaPack, HackRF).
+          warn_after: {count: 20, period: minute}
+          error_after: {count: 60, period: minute}
+      - name: capture_intervals
+        description: Actual listening turns per band. Written at the end of every turn, so silence means the receiver process or replication is down.
+        loaded_at_field: written_at
+        freshness:
+          warn_after: {count: 5, period: minute}
+          error_after: {count: 15, period: minute}
+      - name: receivers
+        description: Receiver identifiers. Location is deliberately not replicated.
+      - name: aircraft_metadata
+        description: Versioned identity records from FAA, OpenSky, tar1090-db and plane-alert-db. A new version is written only when a source's values change.
+        loaded_at_field: _replicated_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: enrichment_imports
+        description: One row per imported source dataset, with its hash and how many versions it changed.
+      - name: military_operator_codes
+        description: Military ICAO operator codes (three-letter callsign prefixes) from VRS standing data (CC0).
+      - name: callword_lookups
+        description: Cached War Watch Intel callsign-family lookups for callwords used by military aircraft.
+      - name: aircraft_type_images
+        description: One representative Wikipedia article and Wikimedia Commons image per ICAO type designator.
+      - name: doc8643_types
+        description: ICAO Doc 8643 aircraft type designators (OpenSky copy), loaded daily as text.
+        loaded_at_field: "CURRENT_TIMESTAMP()"

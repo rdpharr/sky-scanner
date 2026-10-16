@@ -1,0 +1,25 @@
+# Credentials come from Application Default Credentials: your gcloud login
+# locally, the sky-dbt service account on Cloud Run.
+sky_scanner:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT', 'sky-scanner-pharr') }}"
+      dataset: analytics   # becomes dev_analytics / dev_public (macros/generate_schema_name.sql)
+      location: US
+      threads: 8
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      maximum_bytes_billed: 2000000000   # refuse any single query over ~2 GB
+    prod:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT', 'sky-scanner-pharr') }}"
+      dataset: analytics
+      location: US
+      threads: 8
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      maximum_bytes_billed: 2000000000

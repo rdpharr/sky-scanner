@@ -1,0 +1,93 @@
+version: 2
+
+models:
+  - name: stg_aircraft_snapshots
+    description: >
+      Snapshots with duplicate replication deliveries removed (latest
+      written_at wins). One row per receiver, aircraft address, receive
+      frequency and UTC-aligned 15-second bucket.
+    columns:
+      - name: snapshot_id
+        description: Surrogate key over bucket_start, receiver_id, address_type, address and frequency_hz.
+        data_tests: [unique, not_null]
+      - name: bucket_start
+        description: Start of the half-open 15-second UTC bucket [bucket_start, bucket_start + 15 s).
+        data_tests: [not_null]
+      - name: address_type
+        description: How the address was assigned (e.g. icao, or anonymous/non-ICAO UAT types). Identities are scoped by type and address.
+      - name: address
+        description: 24-bit transponder address as six upper-case hex digits.
+      - name: frequency_hz
+        description: Receiver tuning frequency in Hz (1090000000 or 978000000). Not the original transmitter band for rebroadcasts.
+      - name: band_mhz
+        description: Receive band in MHz (1090 or 978).
+        data_tests:
+          - accepted_values: {values: [1090, 978], quote: false}
+      - name: message_count
+        description: Valid messages received from this aircraft in the bucket.
+      - name: callsign
+        description: Flight identification broadcast by the aircraft, trimmed; null if none received.
+      - name: latitude
+        description: Latest decoded latitude in degrees (may be carried forward up to 60 s; see fields).
+      - name: longitude
+        description: Latest decoded longitude in degrees.
+      - name: position
+        description: GEOGRAPHY point built from longitude/latitude; null when no position was decoded.
+      - name: altitude_baro_ft
+        description: Barometric altitude in feet.
+      - name: altitude_geom_ft
+        description: Geometric (GNSS) altitude in feet.
+      - name: ground_speed_kt
+        description: Ground speed in knots.
+      - name: track_deg
+        description: Track over ground in degrees true.
+      - name: squawk
+        description: Mode A code (four octal digits).
+      - name: on_ground
+        description: True when the aircraft reported it was on the ground.
+      - name: fields
+        description: Every decoded field as {value, timestamp (Unix s, original reception), source}. Values carried from earlier buckets keep their original timestamps.
+      - name: written_at
+        description: When the row was last written in the edge database (replication watermark).
+
+  - name: stg_capture_intervals
+    description: Listening turns per band, one row per turn (latest write wins).
+    columns:
+      - name: capture_interval_id
+        data_tests: [unique, not_null]
+      - name: listening_seconds
+        description: Seconds between the turn's start and end; null while a turn is running.
+  - name: stg_receivers
+    description: Receiver identifiers. The receiver's location is never replicated.
+  - name: stg_aircraft_metadata
+    description: >
+      Identity versions from every source, with whitespace normalized and
+      plane-alert-db's "???" placeholders turned into nulls.
+    columns:
+      - name: metadata_id
+        data_tests: [unique, not_null]
+      - name: source_name
+        description: faa_registry (official), opensky (crowdsourced), tar1090_db (community) or plane_alert_mil (military list).
+        data_tests:
+          - accepted_values: {values: [faa_registry, opensky, tar1090_db, plane_alert_mil]}
+      - name: registry_status
+        description: present, or absent when a source stopped listing the aircraft.
+      - name: registrant_type
+        description: FAA registrant type code (see the faa_registrant_types seed). Null on versions written before 2026-10-15.
+  - name: stg_enrichment_imports
+    description: One row per imported source dataset.
+  - name: stg_military_operator_codes
+    description: Military ICAO operator codes (VRS standing data, CC0).
+  - name: stg_callword_lookups
+    description: Cached War Watch Intel callsign-family lookups.
+  - name: stg_aircraft_type_images
+    description: Wikipedia article and Commons image per type designator.
+  - name: stg_doc8643_types
+    description: ICAO Doc 8643 type designators, first entry per designator in file order (as the aircraft log uses it).
+    columns:
+      - name: designator
+        data_tests: [unique, not_null]
+      - name: description
+        description: "ICAO description code: aircraft kind (L land, S sea, A amphibian, H helicopter, G gyrocopter, T tiltrotor), engine count, engine type (J jet, T turboprop, P piston, E electric)."
+      - name: wake_category
+        description: ICAO wake turbulence category (L, M, H, J).

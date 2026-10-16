@@ -1,0 +1,99 @@
+designator,type_name
+A20N,Airbus A320neo
+A21N,Airbus A321neo
+A319,Airbus A319
+A320,Airbus A320
+A321,Airbus A321
+A332,Airbus A330-200
+A333,Airbus A330-300
+A339,Airbus A330-900neo
+A359,Airbus A350-900
+A35K,Airbus A350-1000
+AS50,Airbus AS350 / H125
+B38M,Boeing 737 MAX 8
+B39M,Boeing 737 MAX 9
+B737,Boeing 737-700
+B738,Boeing 737-800
+B739,Boeing 737-900/900ER
+B744,Boeing 747-400
+B748,Boeing 747-8
+B752,Boeing 757-200
+B753,Boeing 757-300
+B763,Boeing 767-300
+B772,Boeing 777-200
+B77L,Boeing 777-200LR/F
+B77W,Boeing 777-300ER
+B788,Boeing 787-8
+B789,Boeing 787-9
+B78X,Boeing 787-10
+BCS1,Airbus A220-100
+BCS3,Airbus A220-300
+BE20,Beech King Air 200
+BE30,Beech King Air 350
+BE36,Beech Bonanza 36
+C172,Cessna 172 Skyhawk
+C182,Cessna 182
+C208,Cessna 208 Caravan
+C240,Cessna TTx
+C25A,Cessna Citation CJ2
+C25B,Cessna Citation CJ3
+C25C,Cessna Citation CJ4
+C414,Cessna 414
+C56X,Cessna Citation Excel/XLS
+C68A,Cessna Citation Latitude
+C700,Cessna Citation Longitude
+C750,Cessna Citation X
+CL30,Bombardier Challenger 300
+CL35,Bombardier Challenger 350
+CL60,Bombardier Challenger 600 series
+CRJ2,Bombardier CRJ200
+CRJ7,Bombardier CRJ700
+CRJ9,Bombardier CRJ900
+DA40,Diamond DA40
+DA42,Diamond DA42
+DH8B,De Havilland Dash 8-200
+DH8D,De Havilland Dash 8-400
+E135,Embraer ERJ-135
+E145,Embraer ERJ-145
+E170,Embraer E170
+E190,Embraer E190
+E295,Embraer E195-E2
+E300,Extra 300
+E545,Embraer Legacy 450/Praetor 500
+E550,Embraer Legacy 500/Praetor 600
+E55P,Embraer Phenom 300
+E75L,Embraer E175
+E75S,Embraer E175
+EC30,Airbus H130 / EC130
+EPIC,Epic E1000
+F2TH,Dassault Falcon 2000
+F900,Dassault Falcon 900
+FA50,Dassault Falcon 50
+FA7X,Dassault Falcon 7X
+GA5C,Gulfstream G500
+GA6C,Gulfstream G600
+GLEX,Bombardier Global Express
+GLF4,Gulfstream G450/GIV
+GLF5,Gulfstream G550/GV
+GLF6,Gulfstream G650
+H25B,Hawker 800/BAe 125
+H500,MD 500 / Hughes 369
+H60,Sikorsky H-60 Black Hawk family
+HA4T,Hawker 4000
+HDJT,HondaJet
+LJ45,Learjet 45
+LJ60,Learjet 60
+M20P,Mooney M20
+P28A,Piper PA-28 Cherokee/Archer
+P28B,Piper PA-28-235 Cherokee
+P28R,Piper PA-28R Arrow
+PA44,Piper PA-44 Seminole
+PA46,Piper PA-46 Malibu
+PC12,Pilatus PC-12
+PC24,Pilatus PC-24
+S22T,Cirrus SR22T
+SF50,Cirrus SF50 Vision Jet
+SR22,Cirrus SR22
+T206,Cessna T206 Turbo Stationair
+TBM7,Daher TBM 700
+TBM9,Daher TBM 900 series

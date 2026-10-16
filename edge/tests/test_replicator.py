@@ -76,8 +76,12 @@ class FakeSink:
     def stream(self, table, rows, row_ids):
         self.streamed.append((table, rows, row_ids))
 
+    def load_csv(self, table, data):
+        self.loads.append((table, data, True))
+
 
 def replicator(source, sink, **kwargs):
+    kwargs.setdefault("urls", {})
     r = Replicator(source, sink, tables=(SNAPSHOTS, RECEIVERS), clock=lambda: T0, **kwargs)
     r.prepare()
     return r
@@ -207,7 +211,9 @@ class RunLoopTests(unittest.TestCase):
             stream(*args)
 
         sink.stream = counting_stream
-        r = Replicator(source, sink, tables=(SNAPSHOTS, RECEIVERS), clock=lambda: T0)
+        r = Replicator(source, sink, tables=(SNAPSHOTS, RECEIVERS), clock=lambda: T0,
+                       urls={"doc8643_types": "https://example.test/types.csv"},
+                       fetch=lambda url: b"Designator\nB738\n")
         run(r, stop, interval=0, reload_every=timedelta(hours=24), max_failures=max_failures)
         return sink
 
@@ -225,7 +231,7 @@ class RunLoopTests(unittest.TestCase):
         sink.stream = flaky
         self.run_polls(sink, polls=3)
         self.assertEqual(len(sink.streamed), 1)
-        self.assertEqual([name for name, _, _ in sink.loads], ["receivers"])
+        self.assertEqual([name for name, _, _ in sink.loads], ["receivers", "doc8643_types"])
 
     def test_gives_up_after_repeated_failures(self):
         sink = FakeSink(max_written_at=T0)

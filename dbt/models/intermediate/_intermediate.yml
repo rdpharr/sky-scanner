@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: int_metadata_versions
+    description: Every identity version per source with the period it was current (valid_from to valid_to).
+    columns:
+      - name: valid_to
+        description: When the next version from the same source replaced this one; null for the latest.
+      - name: is_latest
+        description: The newest version from this source for this aircraft (it may be an absent version).
+  - name: int_aircraft_identity
+    description: >
+      Current identity of every aircraft ever heard, resolved across sources
+      in order of precedence: FAA registry, tar1090-db, OpenSky,
+      plane-alert-db. Only each source's latest version counts, and only if
+      it is present: an aircraft the FAA deregistered no longer gets FAA
+      identity.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [address_type, address]
+    columns:
+      - name: designator
+        description: ICAO type designator. FAA model text mapped by faa_model_type_patterns first, then tar1090-db, OpenSky, plane-alert-db.
+      - name: identity_source
+        description: The highest-precedence source that identifies the aircraft; null when no source does.
+      - name: owner
+        description: Registered owner from the FAA, else tar1090-db, else OpenSky. May be a private individual; never exposed publicly (see pub_aircraft.owner_name).
+      - name: is_ladd
+        description: tar1090-db flags the aircraft as on the FAA LADD list (owner asked that it not be displayed).
+      - name: is_pia
+        description: tar1090-db flags the address as an FAA Privacy ICAO Address.
+      - name: is_miscode
+        description: tar1090-db says the transponder broadcasts an invalid address; other tar1090 values are ignored.
+  - name: int_military_classification
+    description: >
+      Whether each aircraft counts as military, and every rule that fired:
+      us_military_address_block (ICAO AE0000-AFFFFF), plane_alert_db (on the
+      plane-alert-db military list), tar1090_military_flag,
+      military_operator_code (a callsign starting with a military ICAO
+      operator code, e.g. RCH) and, as supporting evidence only,
+      us_coast_guard_callsign (C + tail number from a US military address).
+    columns:
+      - name: military_rules
+        description: Every rule that fired, in the order listed above. Empty for civil aircraft.
+      - name: military_operator
+        description: plane-alert-db operator, else the operator-code name, else US Coast Guard for the callsign convention.

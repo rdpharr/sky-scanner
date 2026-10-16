@@ -410,26 +410,55 @@ public). Raw circling turned out to be dominated by flight schools.
   after 5 failing polls. The trigger was BigQuery's streaming endpoint
   reporting "not found" for a few minutes after a table was recreated.
 
-### Phase 2: dbt models and canonical definitions
-- dbt project: staging (removing duplicates), the registry history in
-  `int_metadata_versions`, identity precedence, military classification,
-  sightings and path features, marts, the `public` views, metric
-  definitions and seeds (type tables ported from `aircraft_log.py`).
-- Tests: keys, ranges, relationships, overlapping intervals, leak tests,
-  Postgres parity.
+### Phase 2: dbt models and canonical definitions — done (2026-10-16)
+- dbt Core 1.12.6 + dbt-bigquery 1.12.1 in `dbt/.venv`. Targets: `dev`
+  builds into `dev_analytics`/`dev_public`; `prod` into `analytics`/`public`.
+- 10 staging views, 3 intermediate tables (version history, identity
+  resolution, military classification), 7 marts (`fct_snapshots`
+  incremental, `fct_sightings` with path features, `dim_aircraft`,
+  `dim_aircraft_type`, `agg_daily_traffic`, `fct_capture_intervals`,
+  `fct_receiver_uptime_hourly`), 7 `pub_*` views.
+- 7 seeds generated from `aircraft_log.py` and reference lists (type names,
+  FAA model patterns, airline prefixes, registrant types, squawks, local
+  airports).
+- 11 MetricFlow metrics on 4 semantic models (`models/semantic/`).
+- The replicator now also loads the ICAO Doc 8643 type list
+  (`raw.doc8643_types`), keeping file order so the first entry wins as in
+  Python.
+- Notable-candidate scoring is deferred to Phase 6.
 
-**Demo:**
-- `dbt build` output, every model and test.
-- The definitions with real numbers: confirmed vs unconfirmed aircraft,
-  sightings per aircraft, identification rate by source, military
-  aircraft by the rule that fired.
-- The same weekly numbers from the marts and from the old LAN page, to
-  show they agree.
-- A leak test passing on `public`, then deliberately pointed at
-  `analytics` to show it failing.
-- dbt docs lineage, viewed locally.
+**Demo results (live, prod):**
+- `dbt build`: 72 pass, 1 warning. The warning is 8 snapshots with
+  impossible altitudes (a DA40 at 100,300 ft, an E175 at 120,400 ft):
+  decoding errors the test is meant to surface.
+- **Parity with the LAN page, all 5,474 aircraft:** 0 differences in
+  confirmed status, military, kind, class, designator and registration. 10
+  type names differ only in capitalization ("Van's" vs Python's "Van'S").
+  One identity-source difference is a LAN list-page bug: N425FX (A50EC5) was
+  deregistered by the FAA on Oct 14, but the list page still credits the
+  FAA. dbt and the LAN detail page both use the latest version.
+- Definitions:
+  - 5,173 confirmed aircraft; 304 single-message addresses (5.6%) excluded.
+  - 12,145 sightings, 2.35 per aircraft; median 2.2 min, longest 104 min;
+    6,400 with positions.
+  - Identification: FAA 90.2%, tar1090-db 9.5%, OpenSky 0.1%,
+    unidentified 0.3%.
+  - 59 military aircraft. tar1090-db flags all 59; 45 are in the US military
+    block; 35 are on plane-alert-db; 4 use military operator codes; 1 uses
+    the Coast Guard callsign convention. 10 are flagged military only by
+    tar1090-db: an open definitional question.
+- Leak tests pass on `public`. Pointed at `analytics.dim_aircraft`, the
+  LADD/PIA test would fail with 599 rows (585 LADD, 14 PIA); public has
+  4,878 of 5,477 aircraft.
+- Owner names: 293 organization names shown; 4,043 withheld. All FAA
+  owners stay withheld until the registrant type arrives with the next FAA
+  publication.
+- Descriptions reach BigQuery (`persist_docs`).
 
-**Done when:** `dbt build` passes and the parity checks agree.
+**Follow-up for Phase 5:** some `pub_*` columns lack descriptions because
+they are documented only on the underlying mart (e.g.
+`pub_aircraft.aircraft_class`). Share column docs with doc blocks and add a
+check that every public column is described.
 
 ### Phase 3: Scheduling, data quality and alerting
 - `dbt_runner` Cloud Run Job: hourly build, freshness checks every 15

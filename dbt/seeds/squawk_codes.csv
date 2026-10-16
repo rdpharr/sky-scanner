@@ -1,0 +1,5 @@
+squawk,meaning,is_emergency
+7500,Unlawful interference (hijack),true
+7600,Radio failure,true
+7700,General emergency,true
+1200,VFR (US),false

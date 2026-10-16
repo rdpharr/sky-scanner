@@ -13,6 +13,9 @@ backfill). Every replicated row carries ``_replicated_at``.
 Columns are mapped from the Postgres catalog, so new edge columns appear in
 BigQuery automatically. Generated columns are skipped, and the receiver's
 ``location`` never leaves home.
+
+A few reference lists that the edge fetches at runtime rather than storing
+(``REFERENCE_URLS``) are loaded from their URLs on the same daily schedule.
 """
 
 from __future__ import annotations
@@ -59,6 +62,13 @@ TABLES = (
     TableSpec("callword_lookups", "reload"),
     TableSpec("aircraft_type_images", "reload"),
 )
+
+# Published CSVs loaded as text columns named by their header row.
+REFERENCE_URLS = {
+    # ICAO Doc 8643 aircraft type designators, as used by the aircraft log page.
+    "doc8643_types": "https://s3.opensky-network.org/data-samples/metadata/doc8643AircraftTypes.csv",
+}
+MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 
 _TYPES = {
     "text": "STRING", "character varying": "STRING", "character": "STRING",
@@ -110,6 +120,7 @@ class Sink(Protocol):
     def load(self, spec: TableSpec, schema: list[Column], rows: Iterable[dict[str, Any]],
              truncate: bool) -> int: ...
     def stream(self, table: str, rows: list[dict[str, Any]], row_ids: list[str]) -> None: ...
+    def load_csv(self, table: str, data: bytes) -> None: ...
 
 
 @dataclass
@@ -121,9 +132,12 @@ class StreamState:
 class Replicator:
     def __init__(self, source: Source, sink: Sink, tables: Iterable[TableSpec] = TABLES,
                  overlap: timedelta = timedelta(minutes=2), batch_size: int = 500,
-                 clock=lambda: datetime.now(timezone.utc)):
+                 clock=lambda: datetime.now(timezone.utc),
+                 urls: dict[str, str] | None = None, fetch=None):
         self.source, self.sink = source, sink
         self.tables = tuple(tables)
+        self.urls = dict(REFERENCE_URLS if urls is None else urls)
+        self.fetch = fetch or _fetch
         self.overlap, self.batch_size, self.clock = overlap, batch_size, clock
         self.schemas: dict[str, list[Column]] = {}
         self.streams: dict[str, StreamState] = {}
@@ -156,6 +170,11 @@ class Replicator:
         count = self.sink.load(spec, self.schemas[spec.name], self._rows(spec), truncate=True)
         log.info("reloaded %s: %d rows", spec.name, count)
         return count
+
+    def reload_url(self, table: str) -> None:
+        data = self.fetch(self.urls[table])
+        self.sink.load_csv(table, data)
+        log.info("reloaded %s from %s: %d bytes", table, self.urls[table], len(data))
 
     def start_stream(self, spec: TableSpec) -> None:
         """Resume from what BigQuery already holds, or backfill an empty table."""
@@ -317,10 +336,44 @@ class BigQuerySink:
                                                  job_config=config).result()
         return count
 
+    def load_csv(self, table, data):
+        import csv
+        import io
+
+        from google.cloud import bigquery
+
+        # Column names come from the header; values stay text for dbt to type.
+        # _row_number keeps file order, which consumers may rely on (first
+        # entry wins); a load job does not preserve it.
+        reader = csv.reader(io.StringIO(data.decode("utf-8-sig")))
+        header = [name.strip() for name in next(reader)]
+        out = io.StringIO()
+        writer = csv.writer(out)
+        for number, row in enumerate(reader, 1):
+            writer.writerow([number, *row])
+        config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.CSV,
+            schema=[bigquery.SchemaField("_row_number", "INT64")]
+            + [bigquery.SchemaField(name, "STRING") for name in header],
+            write_disposition="WRITE_TRUNCATE")
+        self.client.load_table_from_file(io.BytesIO(out.getvalue().encode()), self._ref(table),
+                                         job_config=config).result()
+
     def stream(self, table, rows, row_ids):
         errors = self.client.insert_rows_json(self._ref(table), rows, row_ids=row_ids)
         if errors:
             raise RuntimeError(f"BigQuery rejected rows for {table}: {errors[:3]}")
+
+
+def _fetch(url: str, timeout: int = 60) -> bytes:
+    import urllib.request
+
+    request = urllib.request.Request(url, headers={"User-Agent": "SkyScanner/1.0"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        data = response.read(MAX_REFERENCE_BYTES + 1)
+    if len(data) > MAX_REFERENCE_BYTES:
+        raise ValueError(f"{url} is larger than {MAX_REFERENCE_BYTES} bytes")
+    return data
 
 
 def run(replicator: Replicator, stop: threading.Event, interval: float,
@@ -337,6 +390,7 @@ def run(replicator: Replicator, stop: threading.Event, interval: float,
             replicator.start_stream(spec)
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     next_reload = {s.name: epoch for s in replicator.tables if s.mode == "reload"}
+    next_reload.update({name: epoch for name in replicator.urls})
     streamed, last_report, failures = 0, replicator.clock(), 0
     while not stop.is_set():
         now = replicator.clock()
@@ -353,6 +407,15 @@ def run(replicator: Replicator, stop: threading.Event, interval: float,
             except Exception as exc:
                 error = exc
                 log.exception("replicating %s failed; retrying next poll", spec.name)
+        for name in replicator.urls:
+            if now < next_reload[name]:
+                continue
+            try:
+                replicator.reload_url(name)
+                next_reload[name] = now + reload_every
+            except Exception as exc:
+                error = exc
+                log.exception("loading %s failed; retrying next poll", name)
         failures = failures + 1 if error else 0
         if failures >= max_failures:
             raise error

@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: pub_aircraft
+    description: >
+      Aircraft for public use (website, MCP server, notable-aircraft agent).
+      Excludes aircraft on the FAA LADD list and Privacy ICAO Addresses.
+      Owner names appear only for registered organizations. Same grain and
+      definitions as dim_aircraft.
+    columns:
+      - name: owner_name
+        description: >
+          Registered owner when it is an organization: for FAA aircraft, a
+          corporation, government, LLC or non-citizen corporation registrant;
+          for others, a name that reads as an organization. Null otherwise,
+          including all private individuals and trusts.
+      - name: owner_category
+        description: FAA registrant category for shown owners; "Private or unverified" when the name is withheld; "Unknown" when no source lists an owner.
+      - name: is_confirmed
+        description: Heard in at least 2 messages over all time (the canonical definition of an aircraft). Filter on this for counts.
+  - name: pub_snapshots
+    description: Every 15-second snapshot of a public aircraft. Always filter on bucket_start; the table is partitioned by day.
+  - name: pub_sightings
+    description: Sightings of public aircraft (runs of snapshots with no gap over 10 minutes), with flight-path features.
+  - name: pub_aircraft_types
+    description: ICAO types heard, counted over public aircraft only. aircraft_heard is how many confirmed public aircraft of the type were heard; low values mean the type is rare here.
+  - name: pub_daily_traffic
+    description: Daily traffic per band (Pacific time) with listening-hour-normalized rates.
+  - name: pub_receiver_uptime_hourly
+    description: Listening seconds per band per UTC hour.
+  - name: pub_callword_lookups
+    description: War Watch Intel callsign-family lookups for military callwords. Supporting evidence, not unit identification.
