@@ -132,6 +132,15 @@ def in_text(claimed: Any, text: str) -> bool:
     return True
 
 
+ISO_IN_PARENS = re.compile(r"\s*\(\d{4}-\d\d-\d\dT[^()]*\)")
+
+
+def tidy(text: str) -> str:
+    """Drop ISO timestamps the model added in parentheses after a Pacific
+    time. The sentence must still verify without them."""
+    return ISO_IN_PARENS.sub("", text)
+
+
 def check_statement(statement: Any, calls: dict[str, Any]) -> tuple[bool, str]:
     if not isinstance(statement, dict) or not statement.get("text"):
         return False, "not a statement"
@@ -193,6 +202,8 @@ def verify(draft: dict[str, Any], calls: dict[str, Any]) -> tuple[dict[str, Any]
             if s is None:
                 continue
             report["checked"] += 1
+            if isinstance(s, dict) and isinstance(s.get("text"), str):
+                s = {**s, "text": tidy(s["text"])}
             ok, reason = check_statement(s, calls)
             if ok:
                 report["verified"] += 1

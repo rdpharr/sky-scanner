@@ -11,6 +11,8 @@ import streamlit as st
 from lib import bq
 from lib.fmt import local
 
+st.set_page_config(layout="centered")  # an article: keep lines readable
+
 
 def as_json(value):
     return json.loads(value) if isinstance(value, str) else value
@@ -41,24 +43,40 @@ pool = published if len(published) else df
 labels = {row.edition_id: f"{row.week_start:%-d %b} to {(row.week_end - pd.Timedelta(days=1)):%-d %b %Y}"
           + ("" if row.status == "published" else " (evaluation edition)")
           for row in pool.drop_duplicates("week_end").itertuples()}
-chosen = st.selectbox("Week", list(labels), format_func=labels.get)
+header = st.container()  # filled once the week is chosen, but shown above the controls
+controls = st.container(horizontal=True, vertical_alignment="bottom")
+chosen = controls.selectbox("Week", list(labels), format_func=labels.get, width=260)
+show_evidence = controls.toggle("Show evidence", help="Under each sentence, show the tool call and "
+                                "the values it was checked against.")
 row = pool[pool.edition_id == chosen].iloc[0]
 edition, photos = as_json(row.edition), as_json(row.photos) or {}
 
-show_evidence = st.toggle("Show evidence", help="Under each sentence, show the tool call and "
-                          "the values it was checked against.")
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def registrations(addresses: tuple[str, ...]) -> dict[str, str]:
+    """Address -> registration, to label links to aircraft pages."""
+    if not addresses:
+        return {}
+    found = bq.run(f"""select address, registration from {bq.table('pub_aircraft')}
+                       where address_type = 'icao' and address in unnest(split(@addresses))
+                         and registration is not null""", addresses=",".join(addresses))
+    return dict(zip(found.address, found.registration))
+
+
+names = registrations(tuple(sorted({a.upper() for sec in edition.get("sections", [])
+                                    for e in sec.get("entries", []) for a in (e.get("addresses") or [])})))
 
 
 def statements(items: list[dict] | None) -> None:
     for s in items or []:
         st.markdown(s["text"])
         if show_evidence:
-            st.caption(" · ".join(f"`{e['call']}` {e['path']} = {e['value']!r}" for e in s["evidence"]))
+            st.caption("; ".join(f"`{e['call']}` {e['path']} = {e['value']!r}" for e in s["evidence"]))
 
 
-st.title(edition.get("title") or "Notable aircraft")
+header.title(edition.get("title") or "Notable aircraft")
 if edition.get("subtitle"):
-    st.caption(edition["subtitle"])
+    header.caption(edition["subtitle"])
 if row.status != "published":
     st.warning("This edition was written to evaluate the agent and is not a published weekly edition.",
                title="Evaluation edition")
@@ -84,11 +102,17 @@ for section in edition.get("sections", []):
                 if entry.get("what_it_is"):
                     st.markdown(f"*{entry['what_it_is']['text']}*")
                     if show_evidence:
-                        st.caption(" · ".join(f"`{e['call']}` {e['path']} = {e['value']!r}"
+                        st.caption("; ".join(f"`{e['call']}` {e['path']} = {e['value']!r}"
                                               for e in entry["what_it_is"]["evidence"]))
                 statements(entry.get("details"))
+                links = st.container(horizontal=True, gap="small")
+                for address in (entry.get("addresses") or [])[:8]:
+                    links.page_link("views/aircraft_detail.py", label=names.get(address.upper(), address.upper()),
+                                    icon=":material/flight:",
+                                    query_params={"address": address.upper()}, help="Open this aircraft's page")
                 if photo and photo.get("article_url"):
-                    st.markdown(f"[Wikipedia: {photo.get('article_title') or entry['title']}]({photo['article_url']})")
+                    links.link_button(f"Wikipedia: {photo.get('article_title') or entry['title']}",
+                                      photo["article_url"], type="tertiary", icon=":material/open_in_new:")
 
 if edition.get("privacy"):
     st.header("Privacy-protected aircraft", divider="gray")
@@ -117,7 +141,7 @@ with st.expander("How this edition was made", icon=":material/smart_toy:"):
     c2.metric("Tool calls", int(row.tool_call_count))
     c3.metric("Cost", f"${row.cost_usd:.2f}")
     c4.metric("Written in", f"{row.seconds / 60:.0f} min")
-    st.caption(f"Generated {local(pd.Series([row.generated_at])).iloc[0]:%Y-%m-%d %H:%M} PT · "
+    st.caption(f"Generated {local(pd.Series([row.generated_at])).iloc[0]:%Y-%m-%d %H:%M} PT, using "
                f"{row.prompt_tokens:,} prompt and {row.completion_tokens:,} completion tokens.")
     removed = as_json(row.removed_statements) or []
     if removed:

@@ -3,9 +3,21 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "services/web/.venv/bin/streamlit",
-      "runtimeArgs": ["run", "services/web/app.py", "--server.port=8501", "--server.address=127.0.0.1", "--server.headless=true", "--browser.gatherUsageStats=false"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd services/web && .venv/bin/streamlit run app.py --server.port=8501 --server.address=127.0.0.1 --server.headless=true --browser.gatherUsageStats=false"
+      ],
       "port": 8501
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd services/web && PUBLIC_DATASET=dev_public .venv/bin/streamlit run app.py --server.port=8502 --server.address=127.0.0.1 --server.headless=true --browser.gatherUsageStats=false"
+      ],
+      "port": 8502
     }
   ]
 }

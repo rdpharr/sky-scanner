@@ -117,3 +117,13 @@ class TitleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TidyTests(unittest.TestCase):
+    def test_iso_timestamp_in_parentheses_is_removed(self):
+        text = "Last seen at 2:37 pm on Thursday 15 October (2026-10-15T21:37:46.452000+00:00)."
+        self.assertEqual(verifier.tidy(text), "Last seen at 2:37 pm on Thursday 15 October.")
+
+    def test_other_parentheses_are_kept(self):
+        self.assertEqual(verifier.tidy("HC-130J 09-0108 (AE29D8) climbed"), "HC-130J 09-0108 (AE29D8) climbed")
+

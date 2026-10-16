@@ -38,7 +38,20 @@ def commons_credit(file_url: str) -> dict[str, str] | None:
     def text(key: str) -> str:
         return re.sub(r"<[^>]+>", "", meta.get(key, {}).get("value", "")).strip()
 
-    return {"author": text("Artist"), "license": text("LicenseShortName"), "file_url": file_url}
+    return {"author": author(meta.get("Artist", {}).get("value", "")), "license": text("LicenseShortName"),
+            "file_url": file_url}
+
+
+def author(html: str) -> str:
+    """A short author credit from Commons' Artist field, which often holds
+    links, emails and camera notes: the first link's text, else the first
+    line, without email addresses."""
+    link = re.search(r"<a\b[^>]*>(.*?)</a>", html, re.S)
+    text = link.group(1) if link else re.split(r"<br\s*/?>|\n", html)[0]
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\S+\s*(@|\[at\])\s*\S+", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,;|-")
+    return text if len(text) <= 80 else text[:77].rsplit(" ", 1)[0] + "…"
 
 
 def photos(client: bigquery.Client, dataset: str, designators: list[str]) -> dict[str, Any]:

@@ -143,6 +143,26 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(method, "search")
         self.assertIsNotNone(result)
 
+    def test_search_hit_for_another_model_is_rejected(self):
+        get_json = make_get_json(
+            {"North American B-25 Mitchell": summary_payload(description="American WWII medium bomber")},
+            search_hits=[{"title": "North American B-25 Mitchell"}])
+        method, result = wikipedia.resolve("V10", "NORTH AMERICAN AVIATION INC OV-10D", {}, get_json)
+        self.assertIsNone(result)
+
+    def test_names_same_model(self):
+        self.assertTrue(wikipedia.names_same_model("NORTH AMERICAN AVIATION INC OV-10D",
+                                                   "North American Rockwell OV-10 Bronco"))
+        self.assertTrue(wikipedia.names_same_model("TEXTRON AVIATION INC 182T", "Cessna 182 Skylane"))
+        self.assertFalse(wikipedia.names_same_model("TEXTRON AVIATION INC 182T", "Diamond DA40 Diamond Star"))
+        self.assertTrue(wikipedia.names_same_model("Boeing 737-800", "Boeing 737 Next Generation"))
+        self.assertTrue(wikipedia.names_same_model("Beech King Air 350", "Beechcraft Super King Air"))
+        self.assertTrue(wikipedia.names_same_model("Cessna Citation CJ3", "Cessna Citation"))
+        self.assertFalse(wikipedia.names_same_model("DASSAULT Falcon 8X", "Dassault Falcon 7X"))
+        self.assertFalse(wikipedia.names_same_model("BELL TEXTRON CANADA LTD 505", "De Havilland Canada"))
+        self.assertFalse(wikipedia.names_same_model("CIRRUS DESIGN CORP SR20", "Cirrus Aircraft"))
+        self.assertTrue(wikipedia.names_same_model("HondaJet", "Honda HA-420 HondaJet"))
+
     def test_model_name_with_slash_uses_part_before_slash(self):
         calls = []
         get_json = make_get_json(

@@ -688,7 +688,28 @@ E190 and the TransMedics Phenom 300s (corporate fleets).
 
 **Left:** `terraform apply` for the weekly job; first published edition.
 
-### Phase 7: Website polish and repository cleanup
+### Phase 7: Website polish and repository cleanup — in progress (2026-10-16)
+**Done so far:**
+- **Trends page** from two new marts (`agg_hourly_traffic`, `agg_daily_mix`):
+  last-7-days tiles with daily bars and rich tooltips, daily aircraft by kind
+  with low-uptime days shaded, aircraft per listening hour, a weekday × hour
+  heatmap, class mix, identification by source, per-band rates. Every chart
+  has a data table and links to its definition. Headline checked by hand
+  (433.9 vs 434).
+- **Look:** "sectional chart" theme in `.streamlit/config.toml` (chart-paper
+  white, airway-magenta accent, airspace-blue links, Barlow Semi Condensed
+  headings, Public Sans body, matching dark mode); chart palettes checked
+  with the dataviz validator in both modes. Live opens with the live count;
+  prose pages use the centered layout; Material icons; alt text on charts
+  and tables; production hides error details and the developer menu.
+- **Navigation:** reference pages under a Methods section; every aircraft
+  has its own page (`/aircraft-detail?address=…`) linked from the Aircraft
+  log, Live and Notable.
+- **Notable tuning:** Wikipedia search hits must name the same model (18
+  wrong articles cleared); ISO timestamps stripped before verification;
+  Commons credits trimmed to the author. LLC owners stay named (owner's
+  decision).
+
 Comes before launch: the repository goes public and the application goes
 in only after this phase. It starts once Phases 4–6 have pages and the LAN page is no longer needed
 for the Phase 2 parity check.

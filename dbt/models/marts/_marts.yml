@@ -117,6 +117,25 @@ models:
       - name: emergency_squawk
         description: The aircraft squawked 7500, 7600 or 7700 during the sighting.
 
+  - name: agg_hourly_traffic
+    description: >
+      Traffic per UTC hour (aircraft by kind, sightings, messages) joined to
+      receiver listening time. Every hour since collection began has a row,
+      so outages show as low uptime rather than missing data.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [hour_start]
+
+  - name: agg_daily_mix
+    description: >
+      Confirmed aircraft and sightings per Pacific day by class, kind and
+      identity source; sums across rows are distinct aircraft counts.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [day, aircraft_class, aircraft_kind, identity_source]
+
   - name: agg_daily_traffic
     description: >
       Daily traffic per band in Pacific time. Counts confirmed aircraft only.

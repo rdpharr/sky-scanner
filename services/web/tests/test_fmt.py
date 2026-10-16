@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.fmt import ago, present  # noqa: E402
+from lib.fmt import ago, detail_url, present  # noqa: E402
 
 
 class PresentTests(unittest.TestCase):
@@ -35,3 +35,12 @@ class AgoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetailUrlTests(unittest.TestCase):
+    def test_label_is_the_first_known_value(self):
+        self.assertEqual(detail_url("A3685D", "icao", None, "JANET17"), "/aircraft-detail?address=A3685D#JANET17")
+
+    def test_non_icao_address_carries_its_type(self):
+        self.assertEqual(detail_url("ABC123", "tisb_other"), "/aircraft-detail?address=ABC123&type=tisb_other#ABC123")
+

@@ -3,7 +3,8 @@
 Each ICAO type designator is resolved once to an English Wikipedia article:
 first through Wikipedia's "List of aircraft type designators", otherwise by
 searching the readable model name and accepting the hit only when the
-article's short description reads like an aircraft. The article summary's
+article's short description reads like an aircraft and its title names the
+same model (a search for "OV-10D" once returned the B-25 Mitchell). The article summary's
 lead image is kept only when it is hosted on Wikimedia Commons (freely
 licensed); the page hotlinks it from Wikimedia's image servers.
 """
@@ -25,6 +26,9 @@ USER_AGENT = ("SkyScanner/1.0 (personal receive-only ADS-B station; "
 AIRCRAFT_WORDS = re.compile(
     r"aircraft|airliner|airplane|aeroplane|jet|helicopter|rotorcraft|turboprop|glider|"
     r"trainer|bomber|fighter|tanker|transport|seaplane|flying boat|tiltrotor|airlifter", re.I)
+GENERIC_WORDS = {"AIR", "AIRCRAFT", "AIRPLANE", "AEROSPACE", "AMERICA", "AMERICAN", "AVIATION", "CANADA", "COMPANY",
+                 "CORP", "CORPORATION", "DESIGN", "HELICOPTER", "HELICOPTERS", "INC", "INDUSTRIES", "INTERNATIONAL",
+                 "LIMITED", "LLC", "LTD", "MANUFACTURING", "NORTH", "TEXTRON", "THE"}
 COMMONS_IMAGE = re.compile(r"^https://(upload|thumb)\.wikimedia\.org/wikipedia/commons/")
 
 
@@ -59,6 +63,26 @@ def fetch_designator_list(get_json: Callable[[str], Any] = _get_json) -> dict[st
         "action": "parse", "page": DESIGNATOR_PAGE, "prop": "text",
         "format": "json", "formatversion": 2})
     return parse_designator_list(get_json(url)["parse"]["text"])
+
+
+def names_same_model(query: str, title: str) -> bool:
+    """Does the article title plausibly name the model searched for?
+
+    When both name model numbers, they must share one ("OV-10D" is not the
+    "B-25 Mitchell"; "182T" is the "Cessna 182 Skylane"). Otherwise the
+    title must share a distinctive word with the query, not counting the
+    first word (usually the manufacturer): "King Air 350" matches "Super
+    King Air". A family article without the variant's number is accepted
+    only through such a word.
+    """
+    query, title = query.upper(), title.upper()
+    query_numbers, title_numbers = set(re.findall(r"\d+", query)), set(re.findall(r"\d+", title))
+    if query_numbers and title_numbers:
+        return bool(query_numbers & title_numbers)
+    words = re.findall(r"[A-Z]{3,}", query)
+    words = [w for w in (words[1:] if len(words) > 1 else words) if w not in GENERIC_WORDS]
+    title_words = re.findall(r"[A-Z]{3,}", title)
+    return any(t == w or (len(w) >= 5 and t.startswith(w)) for w in words for t in title_words)
 
 
 def search_title(query: str, get_json: Callable[[str], Any] = _get_json) -> str | None:
@@ -109,6 +133,6 @@ def resolve(designator: str, model_name: str | None, designators: dict[str, str]
     if not title:
         return "search", None
     found = summary(title, get_json)
-    if not found or not AIRCRAFT_WORDS.search(found["description"]):
+    if not found or not AIRCRAFT_WORDS.search(found["description"]) or not names_same_model(query, title):
         return "search", None
     return "search", found

@@ -116,6 +116,30 @@ OpenRouter cost of the edition, US dollars.
 Country of registration according to OpenSky.
 {% enddocs %}
 
+{% docs col_daily_mix__aircraft_class %}
+Aircraft class (see pub_aircraft.aircraft_class).
+{% enddocs %}
+
+{% docs col_daily_mix__aircraft_kind %}
+Military, Airline or Other (see pub_aircraft.aircraft_kind).
+{% enddocs %}
+
+{% docs col_daily_mix__confirmed_aircraft %}
+Distinct confirmed aircraft heard that day with this class, kind and source. Each aircraft falls in one row per day, so sums across rows are distinct counts.
+{% enddocs %}
+
+{% docs col_daily_mix__day %}
+Calendar day in Pacific time (America/Los_Angeles).
+{% enddocs %}
+
+{% docs col_daily_mix__identity_source %}
+Highest-precedence source identifying the aircraft (faa_registry, tar1090_db, opensky, plane_alert_mil), or 'Unidentified'.
+{% enddocs %}
+
+{% docs col_daily_mix__sightings %}
+Sightings that started that day by those aircraft.
+{% enddocs %}
+
 {% docs col_daily_traffic__band_mhz %}
 Receive band, MHz: 1090 or 978.
 {% enddocs %}
@@ -286,6 +310,58 @@ Ground speed, knots.
 
 {% docs col_hour_start %}
 Start of the UTC hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__aircraft_per_listening_hour %}
+confirmed_aircraft divided by listening hours: comparable across hours with different uptime. Null when the receiver did not listen.
+{% enddocs %}
+
+{% docs col_hourly_traffic__airline_aircraft %}
+Distinct confirmed aircraft of kind Airline heard in the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__confirmed_aircraft %}
+Distinct confirmed aircraft heard in the hour, either band.
+{% enddocs %}
+
+{% docs col_hourly_traffic__day_pt %}
+Pacific (America/Los_Angeles) date of the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__hour_pt %}
+Pacific hour of day, 0-23.
+{% enddocs %}
+
+{% docs col_hourly_traffic__hour_start %}
+Start of the UTC hour. Every hour since collection began has a row, including hours the receiver was off.
+{% enddocs %}
+
+{% docs col_hourly_traffic__listening_seconds %}
+Seconds spent listening on either band in the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__messages %}
+Messages received in the hour from confirmed aircraft, either band.
+{% enddocs %}
+
+{% docs col_hourly_traffic__military_aircraft %}
+Distinct confirmed aircraft of kind Military heard in the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__other_aircraft %}
+Distinct confirmed aircraft of kind Other (general aviation, business, government civil) heard in the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__sightings_started %}
+Sightings of confirmed aircraft that started in the hour.
+{% enddocs %}
+
+{% docs col_hourly_traffic__uptime_ratio %}
+Share of the hour spent listening on either band. About 0.98 when running normally (retuning between bands); below 0.8 means an outage, so counts for that hour understate traffic.
+{% enddocs %}
+
+{% docs col_hourly_traffic__weekday_pt %}
+Pacific day of the week, e.g. 'Monday'.
 {% enddocs %}
 
 {% docs col_identification_rate %}

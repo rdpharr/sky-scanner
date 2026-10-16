@@ -10,6 +10,8 @@ import streamlit as st
 from lib import bq
 from lib.fmt import local
 
+st.set_page_config(layout="wide")  # maps, charts and tables use the full width
+
 st.title("Agent evals")
 st.markdown(
     "The weekly notable page is written by an AI agent working through this site's MCP server. "
@@ -40,25 +42,26 @@ qa = df[df.kind == "qa"]
 st.dataframe(
     qa[["ran", "model", "score", "passed", "total", "cost_usd", "seconds"]], hide_index=True, width="stretch",
     alt="Q&A evaluation runs by model",
-    column_config={"ran": "Ran (PT)", "score": st.column_config.ProgressColumn("Accuracy", min_value=0, max_value=1,
-                                                                              format="percent"),
+    column_config={"ran": "Ran (PT)", "model": "Model", "passed": "Correct", "total": "Questions",
+                   "score": st.column_config.ProgressColumn("Accuracy", min_value=0, max_value=1, format="percent"),
                    "cost_usd": st.column_config.NumberColumn("Cost", format="$%.3f"),
                    "seconds": st.column_config.NumberColumn("Seconds", format="%d")})
 if len(qa):
-    labels = {r.run_id: f"{r.model} · {r.ran}" for r in qa.itertuples()}
+    labels = {r.run_id: f"{r.model}, {r.ran} PT" for r in qa.itertuples()}
     chosen = st.selectbox("Questions for run", list(labels), format_func=labels.get)
     details = pd.DataFrame(json.loads(qa[qa.run_id == chosen].details.iloc[0]))
     details["tools"] = details.tool_calls.map(lambda calls: ", ".join(calls or []))
     st.dataframe(details[["passed", "question", "answer", "gold", "tools"]], hide_index=True, width="stretch",
                  alt="Each question with the agent's answer and the gold answer",
-                 column_config={"passed": "Correct", "gold": "Gold (SQL)", "tools": "Tools used"})
+                 column_config={"passed": "Correct", "question": "Question", "answer": "Agent's answer",
+                                "gold": "Gold (SQL)", "tools": "Tools used"})
 
 st.header("Edition recall", divider="gray")
 recall = df[df.kind == "edition_recall"]
 if len(recall):
     st.dataframe(recall[["ran", "model", "score", "passed", "total"]], hide_index=True, width="stretch",
                  alt="Edition recall runs",
-                 column_config={"ran": "Ran (PT)", "score": st.column_config.ProgressColumn(
+                 column_config={"ran": "Ran (PT)", "model": "Model", "score": st.column_config.ProgressColumn(
                      "Recall", min_value=0, max_value=1, format="percent"),
                      "passed": "Items found", "total": "Reference items"})
     items = pd.DataFrame(json.loads(recall.details.iloc[0])["items"])

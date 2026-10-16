@@ -231,6 +231,52 @@ models:
     description: '{{ doc(''col_messages_per_listening_hour'') }}'
   - name: aircraft_per_listening_hour
     description: '{{ doc(''col_aircraft_per_listening_hour'') }}'
+- name: pub_hourly_traffic
+  description: Traffic per UTC hour with receiver uptime, Pacific day/hour/weekday, and an uptime-normalized
+    rate. Aggregates only.
+  columns:
+  - name: hour_start
+    description: '{{ doc(''col_hourly_traffic__hour_start'') }}'
+  - name: day_pt
+    description: '{{ doc(''col_hourly_traffic__day_pt'') }}'
+  - name: hour_pt
+    description: '{{ doc(''col_hourly_traffic__hour_pt'') }}'
+  - name: weekday_pt
+    description: '{{ doc(''col_hourly_traffic__weekday_pt'') }}'
+  - name: listening_seconds
+    description: '{{ doc(''col_hourly_traffic__listening_seconds'') }}'
+  - name: uptime_ratio
+    description: '{{ doc(''col_hourly_traffic__uptime_ratio'') }}'
+  - name: confirmed_aircraft
+    description: '{{ doc(''col_hourly_traffic__confirmed_aircraft'') }}'
+  - name: airline_aircraft
+    description: '{{ doc(''col_hourly_traffic__airline_aircraft'') }}'
+  - name: military_aircraft
+    description: '{{ doc(''col_hourly_traffic__military_aircraft'') }}'
+  - name: other_aircraft
+    description: '{{ doc(''col_hourly_traffic__other_aircraft'') }}'
+  - name: sightings_started
+    description: '{{ doc(''col_hourly_traffic__sightings_started'') }}'
+  - name: messages
+    description: '{{ doc(''col_hourly_traffic__messages'') }}'
+  - name: aircraft_per_listening_hour
+    description: '{{ doc(''col_hourly_traffic__aircraft_per_listening_hour'') }}'
+- name: pub_daily_mix
+  description: Confirmed aircraft and sightings per Pacific day by aircraft class, kind and identity source.
+    Aggregates only.
+  columns:
+  - name: day
+    description: '{{ doc(''col_daily_mix__day'') }}'
+  - name: aircraft_class
+    description: '{{ doc(''col_daily_mix__aircraft_class'') }}'
+  - name: aircraft_kind
+    description: '{{ doc(''col_daily_mix__aircraft_kind'') }}'
+  - name: identity_source
+    description: '{{ doc(''col_daily_mix__identity_source'') }}'
+  - name: confirmed_aircraft
+    description: '{{ doc(''col_daily_mix__confirmed_aircraft'') }}'
+  - name: sightings
+    description: '{{ doc(''col_daily_mix__sightings'') }}'
 - name: pub_receiver_uptime_hourly
   description: Listening seconds per band per UTC hour.
   columns:
@@ -280,8 +326,6 @@ models:
     description: '{{ doc(''col_runs_7d'') }}'
   - name: failed_runs_7d
     description: '{{ doc(''col_failed_runs_7d'') }}'
-  - name: warned_runs_7d
-    description: '{{ doc(''col_warned_runs_7d'') }}'
 - name: pub_dbt_runs
   description: Scheduled dbt runs and whether they passed.
   columns:
@@ -295,8 +339,6 @@ models:
     description: '{{ doc(''col_nodes'') }}'
   - name: errors
     description: '{{ doc(''col_errors'') }}'
-  - name: warnings
-    description: '{{ doc(''col_warnings'') }}'
   - name: bytes_billed
     description: '{{ doc(''col_bytes_billed'') }}'
   - name: passed
