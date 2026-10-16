@@ -730,6 +730,16 @@ for the Phase 2 parity check.
   - Empty, loading and error states; number and time formatting (local time
     with UTC on hover); mobile width; colour-blind-safe palette; alt text.
   - Before/after screenshots of each page kept for the README.
+- **Notable edition tuning** (found reading the first published edition,
+  9–15 Oct):
+  - ISO timestamps leak into sentences ("(2026-10-15T21:37:46…)"): strip
+    them before verification; the Pacific time still verifies.
+  - Wrong Wikipedia articles for some designators (V10 Bronco → B-25
+    Mitchell, C82T → Diamond DA40): fix the mapping in
+    `dim_aircraft_type` and add a test against obvious mismatches.
+  - Photo credits copied raw from Commons (one includes an email address
+    and camera details): trim to the author's name and license.
+  - Decide whether single-aircraft LLCs are shown as "private".
 - **Repository cleanup** so it reads well to an interviewer:
   - Remove the LAN website: `edge/sky_scanner/web.py`,
     `aircraft_log.html`, the `web` Compose service, `WEB_PORT` /
