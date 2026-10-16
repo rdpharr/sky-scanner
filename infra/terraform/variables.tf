@@ -54,3 +54,15 @@ variable "owner_email" {
   description = "Google account of the project owner, allowed to impersonate the public-facing service accounts to test what they can read."
   type        = string
 }
+
+variable "mcp_image" {
+  description = "Image for the first deploy of the MCP server. Later images are deployed by CI."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner/mcp:phase5-1792163270"
+}
+
+variable "mcp_domain" {
+  description = "Custom domain for the MCP server (verified like web_domain); empty disables the mapping."
+  type        = string
+  default     = "mcp.skyscanner.pharrhomelab.com"
+}
