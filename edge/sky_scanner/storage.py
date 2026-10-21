@@ -1,285 +1,212 @@
-"""PostgreSQL persistence for snapshots and FAA enrichment.
+"""Enrichment's writes to BigQuery ``raw``.
 
-The database connection may be injected (for example, a DB-API mock). Without
-one, ``from_env`` imports psycopg 3 lazily and reads
-``SKY_SCANNER_DATABASE_URL``. Methods commit each operation atomically and
-roll back on errors. Metadata records follow ``enrichment.parse_faa_registry``.
+Identity metadata is versioned: a source's import adds a ``present`` version
+only for aircraft that are new or whose values changed since that source's
+latest version, and (for full imports) an ``absent`` version for aircraft the
+source stopped listing. Unchanged daily refreshes add no rows. The records
+are loaded into a staging table with a free load job; ``_METADATA_SCRIPT``
+then compares and inserts in one transaction, together with the import's
+``enrichment_imports`` row, so a retried import never adds a version twice.
+
+Lookups (callwords, type photos) and enrichment runs are appended by
+streaming; staging keeps each key's latest lookup. Records follow the
+parsers' shape (``enrichment.parse_faa_registry`` and friends).
 """
 
 from __future__ import annotations
 
-import json
-import os
+import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-_SNAPSHOT_FIELDS = {
-    "callsign": "callsign",
-    "latitude": "latitude",
-    "longitude": "longitude",
-    "altitude_baro_ft": "altitude_baro_ft",
-    "altitude_geom_ft": "altitude_geom_ft",
-    "ground_speed_kt": "ground_speed_kt",
-    "track_deg": "track_deg",
-    "vertical_rate_baro_fpm": "vertical_rate_baro_fpm",
-    "vertical_rate_geom_fpm": "vertical_rate_geom_fpm",
-    "squawk": "squawk",
-    "on_ground": "on_ground",
-}
+from .bq import REPLICATED_AT, SPECS, BigQuery, TableSpec, _columns
 
-_SNAPSHOT_INSERT = """
-INSERT INTO aircraft_snapshots (
- bucket_start, receiver_id, address_type, address, frequency_hz,
- first_received_at, last_received_at, message_count, callsign, latitude,
- longitude, altitude_baro_ft, altitude_geom_ft, ground_speed_kt, track_deg,
- vertical_rate_baro_fpm, vertical_rate_geom_fpm, squawk, on_ground, fields
-) VALUES (
- %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+_VALUE_COLUMNS = (
+    "registration",
+    "manufacturer",
+    "model",
+    "aircraft_type",
+    "registered_owner",
+    "operator",
+    "icao_type_code",
+    "operator_icao",
+    "country",
+    "category",
+    "tags",
 )
-ON CONFLICT (bucket_start, receiver_id, address_type, address, frequency_hz)
-DO NOTHING
-"""
+# Filled by importers after versions already existed; null on older versions.
+_ADDED_COLUMNS = ("registrant_type", "year_mfr")
 
-
-_METADATA_COLUMNS = (
-    "address_type, address, registration, manufacturer, model, "
-    "aircraft_type, registered_owner, operator, icao_type_code, "
-    "operator_icao, country, category, tags, registrant_type, year_mfr"
+_STAGE_COLUMNS = _columns(
+    "address_type STRING!",
+    "address STRING!",
+    *(f"{name} STRING" for name in (*_VALUE_COLUMNS, "registrant_type")),
+    "year_mfr INT64",
+    f"{REPLICATED_AT} TIMESTAMP!",
 )
 
-_METADATA_STAGE_CREATE = """
-CREATE TEMP TABLE sky_metadata_stage (
- address_type text NOT NULL, address text NOT NULL, registration text,
- manufacturer text, model text, aircraft_type text, registered_owner text,
- operator text, icao_type_code text, operator_icao text, country text,
- category text, tags text, registrant_type text, year_mfr integer
-) ON COMMIT DROP
+_ALL = ("address_type", "address", *_VALUE_COLUMNS, *_ADDED_COLUMNS)
+
+# {stage} and {dataset} are replaced before running. A version is new when the
+# aircraft has no version from this source, its latest is "absent", or a value
+# differs; a field added later that is null on the latest version is unknown,
+# not a change.
+_METADATA_SCRIPT = f"""
+DECLARE next_id INT64 DEFAULT (SELECT COALESCE(MAX(id), 0) FROM {{dataset}}.aircraft_metadata);
+DECLARE import_id STRING DEFAULT COALESCE(
+    (SELECT ANY_VALUE(id) FROM {{dataset}}.enrichment_imports
+     WHERE source_url = @source_url AND dataset_hash = @dataset_hash),
+    GENERATE_UUID());
+DECLARE changed INT64;
+
+CREATE TEMP TABLE latest AS
+SELECT * FROM {{dataset}}.aircraft_metadata
+WHERE source_name = @source_name
+QUALIFY ROW_NUMBER() OVER (PARTITION BY address_type, address ORDER BY retrieved_at DESC, id DESC) = 1;
+
+CREATE TEMP TABLE versions AS
+SELECT {", ".join(f"s.{c}" for c in _ALL)}, 'present' AS registry_status
+FROM {{stage}} AS s
+LEFT JOIN latest AS l ON l.address_type = s.address_type AND l.address = s.address
+WHERE l.id IS NULL
+   OR l.registry_status != 'present'
+   OR {" OR ".join(f"l.{c} IS DISTINCT FROM s.{c}" for c in _VALUE_COLUMNS)}
+   OR {" OR ".join(f"(l.{c} IS NOT NULL AND l.{c} IS DISTINCT FROM s.{c})" for c in _ADDED_COLUMNS)}
+UNION ALL
+SELECT l.address_type, l.address, {", ".join(f"NULL AS {c}" for c in _VALUE_COLUMNS)},
+       CAST(NULL AS STRING) AS registrant_type, CAST(NULL AS INT64) AS year_mfr, 'absent' AS registry_status
+FROM latest AS l
+WHERE NOT @partial
+  AND l.registry_status = 'present'
+  AND NOT EXISTS (SELECT 1 FROM {{stage}} AS s WHERE s.address_type = l.address_type AND s.address = l.address);
+
+SET changed = (SELECT COUNT(*) FROM versions);
+
+BEGIN TRANSACTION;
+
+INSERT INTO {{dataset}}.aircraft_metadata
+    (id, {", ".join(_ALL)}, registry_status, source_name, source_url, retrieved_at, dataset_hash,
+     import_id, {REPLICATED_AT})
+SELECT next_id + ROW_NUMBER() OVER (ORDER BY address_type, address), {", ".join(_ALL)}, registry_status,
+       @source_name, @source_url, @retrieved_at, @dataset_hash, import_id, CURRENT_TIMESTAMP()
+FROM versions;
+
+MERGE {{dataset}}.enrichment_imports AS i
+USING (SELECT import_id AS id) AS n
+ON i.id = n.id
+WHEN MATCHED THEN UPDATE SET
+    record_count = @record_count,
+    changed_count = COALESCE(i.changed_count, 0) + changed,
+    {REPLICATED_AT} = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT
+    (id, source_url, retrieved_at, dataset_hash, record_count, imported_at, changed_count, source_name,
+     {REPLICATED_AT})
+    VALUES (import_id, @source_url, @retrieved_at, @dataset_hash, @record_count, CURRENT_TIMESTAMP(), changed,
+            @source_name, CURRENT_TIMESTAMP());
+
+COMMIT TRANSACTION;
+
+DROP TABLE {{stage}};
+
+SELECT import_id, changed;
 """
 
-# New or changed aircraft relative to the latest version from the same source.
-_METADATA_INSERT_CHANGED = """
-INSERT INTO aircraft_metadata
- (address_type, address, registration, manufacturer, model, aircraft_type,
-  registered_owner, operator, icao_type_code, operator_icao, country, category, tags,
-  registrant_type, year_mfr,
-  registry_status, source_name, source_url, retrieved_at, dataset_hash, import_id)
-SELECT s.address_type, s.address, s.registration, s.manufacturer, s.model,
-       s.aircraft_type, s.registered_owner, s.operator, s.icao_type_code,
-       s.operator_icao, s.country, s.category, s.tags, s.registrant_type, s.year_mfr,
-       'present', %(source_name)s,
-       %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
-FROM (SELECT DISTINCT ON (address_type, address) * FROM sky_metadata_stage
-      ORDER BY address_type, address) AS s
-LEFT JOIN LATERAL (
-    SELECT * FROM aircraft_metadata AS m
-    WHERE m.address_type = s.address_type AND m.address = s.address
-      AND m.source_name = %(source_name)s
-    ORDER BY m.retrieved_at DESC, m.id DESC LIMIT 1
-) AS latest ON true
-WHERE latest.id IS NULL OR latest.registry_status <> 'present'
-   OR (latest.registration, latest.manufacturer, latest.model, latest.aircraft_type,
-       latest.registered_owner, latest.operator, latest.icao_type_code,
-       latest.operator_icao, latest.country, latest.category, latest.tags)
-      IS DISTINCT FROM
-      (s.registration, s.manufacturer, s.model, s.aircraft_type,
-       s.registered_owner, s.operator, s.icao_type_code, s.operator_icao, s.country,
-       s.category, s.tags)
-   -- Fields added later are null on older versions: unknown, not a change.
-   OR (latest.registrant_type IS NOT NULL
-       AND latest.registrant_type IS DISTINCT FROM s.registrant_type)
-   OR (latest.year_mfr IS NOT NULL AND latest.year_mfr IS DISTINCT FROM s.year_mfr)
-ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
+_IMPORT_SCRIPT = f"""
+MERGE {{dataset}}.enrichment_imports AS i
+USING (SELECT @source_url AS source_url, @dataset_hash AS dataset_hash) AS n
+ON i.source_url = n.source_url AND i.dataset_hash = n.dataset_hash
+WHEN MATCHED THEN UPDATE SET record_count = @record_count, {REPLICATED_AT} = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT
+    (id, source_url, retrieved_at, dataset_hash, record_count, imported_at, changed_count, source_name,
+     {REPLICATED_AT})
+    VALUES (@import_id, @source_url, @retrieved_at, @dataset_hash, @record_count, CURRENT_TIMESTAMP(),
+            @record_count, @source_name, CURRENT_TIMESTAMP())
 """
 
-# Fill fields added after a version was written (registrant type, year of
-# manufacture) into each aircraft's latest version in place. Filling an
-# unknown value is not a change, so no new version is created.
-_METADATA_FILL_ADDED_FIELDS = """
-UPDATE aircraft_metadata AS m
-SET registrant_type = s.registrant_type, year_mfr = s.year_mfr
-FROM sky_metadata_stage AS s
-WHERE m.source_name = %(source_name)s AND m.registry_status = 'present'
-  AND m.address_type = s.address_type AND m.address = s.address
-  AND m.registrant_type IS NULL AND m.year_mfr IS NULL
-  AND (s.registrant_type IS NOT NULL OR s.year_mfr IS NOT NULL)
-  AND m.id = (SELECT latest.id FROM aircraft_metadata AS latest
-              WHERE latest.source_name = m.source_name
-                AND latest.address_type = m.address_type AND latest.address = m.address
-              ORDER BY latest.retrieved_at DESC, latest.id DESC LIMIT 1)
-"""
-
-# Previously present aircraft that this dataset no longer lists.
-_METADATA_INSERT_ABSENT = """
-INSERT INTO aircraft_metadata
- (address_type, address, registry_status, source_name, source_url, retrieved_at,
-  dataset_hash, import_id)
-SELECT latest.address_type, latest.address, 'absent', %(source_name)s,
-       %(source_url)s, %(retrieved_at)s, %(dataset_hash)s, %(import_id)s
-FROM (SELECT DISTINCT ON (address_type, address) address_type, address, registry_status
-      FROM aircraft_metadata WHERE source_name = %(source_name)s
-      ORDER BY address_type, address, retrieved_at DESC, id DESC) AS latest
-WHERE latest.registry_status = 'present'
-  AND NOT EXISTS (SELECT 1 FROM sky_metadata_stage AS s
-                  WHERE s.address_type = latest.address_type AND s.address = latest.address)
-ON CONFLICT (address_type, address, source_url, dataset_hash) DO NOTHING
-"""
+# Tables enrichment writes; doc8643_types is created by its CSV load.
+_TABLES = (
+    "aircraft_metadata",
+    "enrichment_imports",
+    "military_operator_codes",
+    "callword_lookups",
+    "aircraft_type_images",
+    "enrichment_runs",
+)
 
 
-def _stage_metadata(cursor, records: list[dict[str, Any]], batch_size: int) -> None:
-    """Load records into a transaction-local staging table."""
-    cursor.execute(_METADATA_STAGE_CREATE)
-    stage_sql = f"INSERT INTO sky_metadata_stage ({_METADATA_COLUMNS}) VALUES ({', '.join(['%s'] * 15)})"
-    for offset in range(0, len(records), batch_size):
-        chunk = records[offset : offset + batch_size]
-        values = [
-            (
-                record.get("address_type", "icao"),
-                record.get("icao_address") or record.get("address"),
-                record.get("registration"),
-                record.get("manufacturer"),
-                record.get("model"),
-                record.get("aircraft_type"),
-                record.get("registered_owner"),
-                record.get("operator"),
-                record.get("icao_type_code"),
-                record.get("operator_icao"),
-                record.get("country"),
-                record.get("category"),
-                record.get("tags"),
-                record.get("registrant_type"),
-                record.get("year_mfr"),
-            )
-            for record in chunk
-        ]
-        if values:
-            cursor.executemany(stage_sql, values)
-    cursor.execute("CREATE INDEX ON sky_metadata_stage (address_type, address)")
-
-
-def _utc(value: Any) -> datetime:
+def _iso_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         result = value
+    elif isinstance(value, (int, float)):
+        result = datetime.fromtimestamp(float(value), UTC)
     else:
-        result = datetime.fromtimestamp(float(value), tz=UTC)
+        result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if result.tzinfo is None:
         result = result.replace(tzinfo=UTC)
     return result.astimezone(UTC)
 
 
-def _field_value(fields: dict[str, Any], name: str) -> Any:
-    item = fields.get(name)
-    return item.get("value") if isinstance(item, dict) and "value" in item else item
+def _text(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
-def _iso_datetime(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        return _utc(value)
-    if isinstance(value, (int, float)):
-        return _utc(value)
-    text = str(value).replace("Z", "+00:00")
-    return _utc(datetime.fromisoformat(text))
+def _integer(value: Any) -> int | None:
+    try:
+        return None if value in (None, "") else int(value)
+    except (TypeError, ValueError):
+        return None
 
 
-class PostgresStorage:
-    """Small DB-API adapter using psycopg 3 or an injected connection."""
+def stage_rows(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One staging row per address type and address (the first record wins)."""
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        address_type = record.get("address_type", "icao")
+        address = record.get("icao_address") or record.get("address")
+        if (address_type, address) in rows:
+            continue
+        row = {"address_type": address_type, "address": address}
+        for name in (*_VALUE_COLUMNS, "registrant_type"):
+            row[name] = _text(record.get(name))
+        row["year_mfr"] = _integer(record.get("year_mfr"))
+        rows[(address_type, address)] = row
+    return list(rows.values())
 
-    def __init__(self, connection: Any):
-        self.connection = connection
 
-    @classmethod
-    def from_env(cls) -> PostgresStorage:
-        """Connect using SKY_SCANNER_DATABASE_URL; import psycopg only on use."""
-        dsn = os.environ.get("SKY_SCANNER_DATABASE_URL") or os.environ.get("DATABASE_URL")
-        if not dsn:
-            raise RuntimeError("DATABASE_URL or SKY_SCANNER_DATABASE_URL is not configured")
-        try:
-            import psycopg
-        except ImportError as exc:
-            raise RuntimeError("psycopg 3 is required for PostgreSQL storage") from exc
-        return cls(psycopg.connect(dsn))
+def _stage_spec(source_name: str) -> TableSpec:
+    if not re.fullmatch(r"[a-z0-9_]+", source_name):
+        raise ValueError(f"invalid source name {source_name!r}")
+    return TableSpec(f"_stage_metadata_{source_name}", _STAGE_COLUMNS)
 
-    def init_schema(self, schema_path: str | Path | None = None) -> None:
-        path = Path(schema_path) if schema_path else Path(__file__).resolve().parent.parent / "sql/schema.sql"
-        self._execute_script(path.read_text(encoding="utf-8"))
 
-    def register_receiver(
-        self,
-        receiver_id: str,
-        description: str | None = None,
-        latitude: float | None = None,
-        longitude: float | None = None,
-    ) -> None:
-        if (latitude is None) != (longitude is None):
-            raise ValueError("latitude and longitude must be supplied together")
-        if latitude is None:
-            sql = """INSERT INTO receivers(receiver_id, description) VALUES (%s, %s)
-                ON CONFLICT(receiver_id) DO UPDATE SET description=EXCLUDED.description"""
-            params = (receiver_id, description)
-        else:
-            sql = """INSERT INTO receivers(receiver_id, description, location)
-                VALUES (%s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography)
-                ON CONFLICT(receiver_id) DO UPDATE SET description=EXCLUDED.description,
-                location=EXCLUDED.location"""
-            params = (receiver_id, description, longitude, latitude)
-        self._execute(sql, params)
+class BigQueryStorage:
+    """The enrichment worker's storage, backed by BigQuery ``raw``."""
 
-    def save_capture_interval(self, interval: dict[str, Any]) -> None:
-        interval_id = interval.get("id") or uuid.uuid4()
-        sql = """INSERT INTO capture_intervals
-            (id, receiver_id, frequency_hz, started_at, ended_at, decoder_version, sample_config)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
-            ON CONFLICT (id) DO UPDATE SET ended_at=EXCLUDED.ended_at,
-            decoder_version=EXCLUDED.decoder_version, sample_config=EXCLUDED.sample_config,
-            written_at=clock_timestamp()"""
-        params = (
-            interval_id,
-            interval["receiver_id"],
-            int(interval["frequency_hz"]),
-            _utc(interval["started_at"]),
-            _utc(interval["ended_at"]) if interval.get("ended_at") is not None else None,
-            interval.get("decoder_version"),
-            json.dumps(interval.get("sample_config") or {}),
+    def __init__(self, bigquery: BigQuery):
+        self.bigquery = bigquery
+        self._ready = False
+
+    def _ensure(self) -> None:
+        if not self._ready:
+            for name in _TABLES:
+                self.bigquery.ensure_table(SPECS[name])
+            self._ready = True
+
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        self._ensure()
+        return self.bigquery.query(sql, params)
+
+    def import_exists(self, source_url: str, dataset_hash: str | None = None) -> bool:
+        """Has this dataset (or, without a hash, anything from this URL) been imported?"""
+        condition = " AND dataset_hash = @dataset_hash" if dataset_hash else ""
+        params = {"source_url": source_url, **({"dataset_hash": dataset_hash} if dataset_hash else {})}
+        rows = self.query(
+            f"SELECT COUNT(*) AS n FROM {{dataset}}.enrichment_imports WHERE source_url = @source_url{condition}",
+            params,
         )
-        self._execute(sql, params)
-
-    def save_snapshots(self, rows: Iterable[dict[str, Any]]) -> int:
-        """Insert snapshots transactionally; duplicate composite keys are ignored."""
-        params = [self._snapshot_params(row) for row in rows]
-        if not params:
-            return 0
-        cursor = self.connection.cursor()
-        try:
-            cursor.executemany(_SNAPSHOT_INSERT, params)
-            inserted = max(0, int(cursor.rowcount))
-            self.connection.commit()
-            return inserted
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
-
-    def fill_added_fields(
-        self, records: Iterable[dict[str, Any]], *, source_name: str = "faa_registry", batch_size: int = 5000
-    ) -> int:
-        """Fill fields added after versions were written into each aircraft's
-        latest version, from an already-imported dataset. Creates no versions.
-        Returns the number of versions filled."""
-        cursor = self.connection.cursor()
-        try:
-            _stage_metadata(cursor, list(records), batch_size)
-            cursor.execute(_METADATA_FILL_ADDED_FIELDS, {"source_name": source_name})
-            filled = max(0, int(cursor.rowcount or 0))
-            self.connection.commit()
-            return filled
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
+        return bool(rows and rows[0]["n"])
 
     def save_metadata_import(
         self,
@@ -288,132 +215,78 @@ class PostgresStorage:
         source_url: str | None = None,
         retrieved_at: Any | None = None,
         dataset_hash: str | None = None,
-        batch_size: int = 5000,
         source_name: str = "faa_registry",
         partial: bool = False,
     ) -> str:
-        """Save import provenance and only the metadata versions that changed.
+        """Save only the metadata versions that changed; returns the import ID.
 
-        Records are staged in a transaction-local temporary table. A new
-        ``present`` version is written only when an aircraft is new or its
-        registry fields differ from its latest version from the same ``source_name``; an
-        ``absent`` version is written when a previously present aircraft is no
-        longer listed. Unchanged daily refreshes therefore add no metadata rows.
         ``partial`` imports cover only some aircraft (for example, only those
-        observed), so no ``absent`` versions are written for the rest.
-        Uses the parser's provenance when import-level values are omitted.
-        Returns the enrichment_imports UUID as text.
+        heard), so no ``absent`` versions are written for the rest. Uses the
+        parser's provenance when import-level values are omitted.
         """
         records = list(records)
-        if batch_size < 1:
-            raise ValueError("batch_size must be positive")
         if records:
-            source_url = source_url or records[0]["source_url"]
-            retrieved_at = retrieved_at or records[0]["retrieved_at"]
-            dataset_hash = dataset_hash or records[0]["dataset_hash"]
+            source_url = source_url or records[0].get("source_url")
+            retrieved_at = retrieved_at or records[0].get("retrieved_at")
+            dataset_hash = dataset_hash or records[0].get("dataset_hash")
         if not source_url or retrieved_at is None or not dataset_hash:
             raise ValueError("source_url, retrieved_at, and dataset_hash are required")
-        retrieved = _iso_datetime(retrieved_at)
-        import_id = uuid.uuid4()
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute(
-                """INSERT INTO enrichment_imports
-                   (id, source_url, retrieved_at, dataset_hash, record_count, source_name)
-                   VALUES (%s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (source_url, dataset_hash) DO UPDATE
-                   SET record_count=EXCLUDED.record_count
-                   RETURNING id""",
-                (import_id, source_url, retrieved, dataset_hash, len(records), source_name),
-            )
-            row = cursor.fetchone()
-            if row:
-                import_id = row[0]
-            _stage_metadata(cursor, records, batch_size)
-            params = {
+        if not records and not partial:
+            raise ValueError("refusing a full import with no records: every aircraft would become absent")
+        self._ensure()
+        stage = _stage_spec(source_name)
+        self.bigquery.load(stage, stage_rows(records), truncate=True)
+        script = _METADATA_SCRIPT.replace("{stage}", "{dataset}." + stage.name)
+        (result,) = self.bigquery.query(
+            script,
+            {
                 "source_name": source_name,
                 "source_url": source_url,
-                "retrieved_at": retrieved,
+                "retrieved_at": _iso_datetime(retrieved_at),
                 "dataset_hash": dataset_hash,
-                "import_id": import_id,
-            }
-            cursor.execute(_METADATA_FILL_ADDED_FIELDS, params)
-            cursor.execute(_METADATA_INSERT_CHANGED, params)
-            changed = max(0, int(cursor.rowcount or 0))
-            if not partial:
-                cursor.execute(_METADATA_INSERT_ABSENT, params)
-                changed += max(0, int(cursor.rowcount or 0))
-            # Added, not set: a concurrent import of the same dataset waits on
-            # the import row above, then finds nothing changed. Setting the
-            # count would overwrite the first import's.
-            cursor.execute(
-                "UPDATE enrichment_imports SET changed_count = coalesce(changed_count, 0) + %s WHERE id = %s",
-                (changed, import_id),
-            )
-            self.connection.commit()
-            return str(import_id)
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
+                "record_count": len(records),
+                "partial": partial,
+            },
+        )
+        return str(result["import_id"])
 
     def replace_military_operator_codes(
-        self,
-        codes: Iterable[dict[str, str]],
-        *,
-        source_url: str,
-        retrieved_at: Any,
-        dataset_hash: str,
+        self, codes: Iterable[dict[str, str]], *, source_url: str, retrieved_at: Any, dataset_hash: str
     ) -> str:
-        """Atomically replace the military operator code set, recording provenance."""
+        """Replace the military operator code set, then record the import."""
         codes = list(codes)
         if not codes:
             raise ValueError("refusing to replace military operator codes with an empty set")
-        import_id = uuid.uuid4()
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute(
-                """INSERT INTO enrichment_imports
-                   (id, source_url, retrieved_at, dataset_hash, record_count, source_name)
-                   VALUES (%s, %s, %s, %s, %s, 'military_operator_codes')
-                   ON CONFLICT (source_url, dataset_hash) DO UPDATE
-                   SET record_count=EXCLUDED.record_count
-                   RETURNING id""",
-                (import_id, source_url, _iso_datetime(retrieved_at), dataset_hash, len(codes)),
-            )
-            row = cursor.fetchone()
-            if row:
-                import_id = row[0]
-            cursor.execute("DELETE FROM military_operator_codes")
-            cursor.executemany(
-                "INSERT INTO military_operator_codes (code, name, import_id) VALUES (%s, %s, %s)",
-                [(c["code"], c["name"], import_id) for c in codes],
-            )
-            self.connection.commit()
-            return str(import_id)
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
+        self._ensure()
+        import_id = str(uuid.uuid4())
+        rows = [{"code": c["code"], "name": c["name"], "import_id": import_id} for c in codes]
+        self.bigquery.load(SPECS["military_operator_codes"], rows, truncate=True)
+        # Recorded last: an import row means the codes are in place.
+        self.bigquery.query(
+            _IMPORT_SCRIPT,
+            {
+                "import_id": import_id,
+                "source_name": "military_operator_codes",
+                "source_url": source_url,
+                "retrieved_at": _iso_datetime(retrieved_at),
+                "dataset_hash": dataset_hash,
+                "record_count": len(codes),
+            },
+        )
+        return import_id
 
     def save_callword_lookup(
         self, word: str, status: str, source_url: str, data: dict[str, Any] | None, fetched_at: Any | None = None
     ) -> None:
-        self._execute(
-            """INSERT INTO callword_lookups (word, status, source_url, fetched_at, data)
-               VALUES (%s, %s, %s, %s, %s::jsonb)
-               ON CONFLICT (word) DO UPDATE SET status=EXCLUDED.status,
-               source_url=EXCLUDED.source_url, fetched_at=EXCLUDED.fetched_at, data=EXCLUDED.data""",
-            (
-                word,
-                status,
-                source_url,
-                _iso_datetime(fetched_at or datetime.now(UTC)),
-                json.dumps(data) if data is not None else None,
-            ),
-        )
+        self._ensure()
+        row = {
+            "word": word,
+            "status": status,
+            "source_url": source_url,
+            "fetched_at": _iso_datetime(datetime.now(UTC) if fetched_at is None else fetched_at),
+            "data": data,
+        }
+        self.bigquery.stream(SPECS["callword_lookups"], [row])
 
     def save_type_image(
         self,
@@ -423,65 +296,37 @@ class PostgresStorage:
         result: dict[str, Any] | None,
         fetched_at: Any | None = None,
     ) -> None:
+        self._ensure()
         result = result or {}
-        self._execute(
-            """INSERT INTO aircraft_type_images (designator, model_name, status, method, title,
-                   description, article_url, image_url, file_url, fetched_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (designator) DO UPDATE SET model_name=EXCLUDED.model_name,
-               status=EXCLUDED.status, method=EXCLUDED.method, title=EXCLUDED.title,
-               description=EXCLUDED.description, article_url=EXCLUDED.article_url,
-               image_url=EXCLUDED.image_url, file_url=EXCLUDED.file_url,
-               fetched_at=EXCLUDED.fetched_at""",
-            (
-                designator,
-                model_name,
-                "found" if result else "not_found",
-                method,
-                result.get("title"),
-                result.get("description"),
-                result.get("article_url"),
-                result.get("image_url"),
-                result.get("file_url"),
-                _iso_datetime(fetched_at or datetime.now(UTC)),
-            ),
-        )
+        row = {
+            "designator": designator,
+            "model_name": model_name,
+            "status": "found" if result else "not_found",
+            "method": method,
+            **{k: result.get(k) for k in ("title", "description", "article_url", "image_url", "file_url")},
+            "fetched_at": _iso_datetime(datetime.now(UTC) if fetched_at is None else fetched_at),
+        }
+        self.bigquery.stream(SPECS["aircraft_type_images"], [row])
 
-    @staticmethod
-    def _snapshot_params(row: dict[str, Any]) -> tuple[Any, ...]:
-        fields = row.get("fields") or {}
-        typed = [_field_value(fields, name) for name in _SNAPSHOT_FIELDS]
-        return (
-            _utc(row["bucket_start"]),
-            row["receiver_id"],
-            row["address_type"],
-            row["address"],
-            int(row["frequency_hz"]),
-            _utc(row["first_received_at"]),
-            _utc(row["last_received_at"]),
-            int(row["message_count"]),
-            *typed,
-            json.dumps(fields, separators=(",", ":")),
-        )
+    def load_reference_csv(self, table: str, data: bytes) -> None:
+        self.bigquery.load_csv(table, data)
 
-    def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute(sql, params)
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
-
-    def _execute_script(self, sql: str) -> None:
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute(sql)
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
+    def record_run(
+        self,
+        worker: str,
+        started_at: datetime,
+        finished_at: datetime,
+        status: str,
+        summary: dict[str, Any] | None,
+        error: str | None,
+    ) -> None:
+        self._ensure()
+        row = {
+            "worker": worker,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "status": status,
+            "summary": summary,
+            "error": error,
+        }
+        self.bigquery.stream(SPECS["enrichment_runs"], [row])

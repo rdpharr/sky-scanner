@@ -227,42 +227,15 @@ class ParseOpenskyDatabaseTests(unittest.TestCase):
             opensky.parse_opensky_database(data, source_url="u")
 
 
-class Cursor:
-    def __init__(self, connection):
-        self.connection = connection
-        self.result = None
-
-    def execute(self, sql, params=()):
-        self.connection.queries.append((sql, params))
-        if "SELECT EXISTS" in sql:
-            self.result = (self.connection.exists,)
-        else:
-            self.result = (1,)
-
-    def fetchone(self):
-        return self.result
-
-    def close(self):
-        pass
-
-
-class Connection:
-    def __init__(self, exists=False):
-        self.exists = exists
-        self.queries = []
-        self.closed = False
-
-    def cursor(self):
-        return Cursor(self)
-
-    def close(self):
-        self.closed = True
-
-
 class Storage:
     def __init__(self, exists=False):
-        self.connection = Connection(exists)
+        self.exists = exists
+        self.checked = []
         self.saved = []
+
+    def import_exists(self, url, dataset_hash=None):
+        self.checked.append(url)
+        return self.exists
 
     def save_metadata_import(self, records, **kwargs):
         self.saved.append((records, kwargs))
@@ -274,7 +247,7 @@ class OpenSkyWorkerTests(unittest.TestCase):
         storage = Storage(exists=True)
         download = MagicMock()
         worker = OpenSkyWorker(
-            storage_factory=lambda: storage,
+            storage=storage,
             find_latest=lambda: "https://example.test/snap.csv",
             download=download,
             min_records=1,
@@ -285,7 +258,6 @@ class OpenSkyWorkerTests(unittest.TestCase):
         self.assertEqual(summary["source"], "opensky")
         download.assert_not_called()
         self.assertEqual(storage.saved, [])
-        self.assertTrue(storage.connection.closed)
 
     def test_new_url_downloads_parses_and_saves_with_source_name(self):
         storage = Storage(exists=False)
@@ -293,7 +265,7 @@ class OpenSkyWorkerTests(unittest.TestCase):
         data = valid_snapshot_bytes(3)
         download = MagicMock(return_value=data)
         worker = OpenSkyWorker(
-            storage_factory=lambda: storage,
+            storage=storage,
             find_latest=lambda: url,
             download=download,
             min_records=1,
@@ -308,14 +280,13 @@ class OpenSkyWorkerTests(unittest.TestCase):
         self.assertEqual(len(records), 3)
         self.assertEqual(kwargs["source_name"], "opensky")
         self.assertEqual(kwargs["source_url"], url)
-        self.assertTrue(storage.connection.closed)
 
     def test_too_few_records_raises_and_does_not_save(self):
         storage = Storage(exists=False)
         url = "https://example.test/snap.csv"
         data = valid_snapshot_bytes(1)
         worker = OpenSkyWorker(
-            storage_factory=lambda: storage,
+            storage=storage,
             find_latest=lambda: url,
             download=lambda u: data,
             min_records=100,
@@ -324,16 +295,15 @@ class OpenSkyWorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only 1 records"):
             worker.process_once()
         self.assertEqual(storage.saved, [])
-        self.assertTrue(storage.connection.closed)
 
-    def test_connection_closed_even_when_find_latest_fails(self):
+    def test_find_latest_failure_propagates_without_checking_or_saving(self):
         storage = Storage(exists=False)
 
         def fail_find_latest():
             raise OSError("offline")
 
         worker = OpenSkyWorker(
-            storage_factory=lambda: storage,
+            storage=storage,
             find_latest=fail_find_latest,
             download=MagicMock(),
             min_records=1,
@@ -341,7 +311,7 @@ class OpenSkyWorkerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(OSError, "offline"):
             worker.process_once()
-        self.assertTrue(storage.connection.closed)
+        self.assertEqual((storage.checked, storage.saved), ([], []))
 
 
 class RunForeverTests(unittest.TestCase):

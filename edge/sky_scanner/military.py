@@ -5,9 +5,12 @@ Detection uses local reference data checked against every observed aircraft
 
 * the US military ICAO address block (AE0000-AFFFFF);
 * the plane-alert-db military list (ODbL), keyed by ICAO hex address;
+* tar1090-db's military flag;
 * military ICAO operator codes at the start of a callsign (RCH123 -> Air
   Mobility Command), from Virtual Radar Server standing data (CC0).
 
+These are the rules of dbt's ``int_military_classification``, which is the
+published definition; the edge uses its copy only to choose what to look up.
 Only aircraft flagged by one of those checks have their tactical callword
 (TALON95 -> TALON) looked up in the War Watch Intel callsign codex. Lookups are
 cached, rate limited, and describe which aircraft types and countries have
@@ -117,24 +120,20 @@ def parse_military_operators(data: bytes) -> list[dict[str, str]]:
     return list(result.values())
 
 
-# Callsign conventions that identify a service when the address is in the US
-# military block. US Coast Guard aircraft fly as "C" plus the tail number.
-US_MILITARY_CALLSIGN_PATTERNS = [
-    (re.compile(r"^C\d{4}$"), "US Coast Guard (aircraft number)"),
-]
-
-
-def us_callsign_service(address: str, callsign: str | None) -> str | None:
-    if not is_us_military_address(address) or not callsign:
-        return None
-    for pattern, service in US_MILITARY_CALLSIGN_PATTERNS:
-        if pattern.match(callsign.strip().upper()):
-            return service
-    return None
-
-
-def is_us_military_address(address: str) -> bool:
-    return address.upper().startswith(US_MILITARY_BLOCK)
+def military_evidence(
+    address: str, plane_alert: dict | None, operator_code_name: str | None, tar1090: dict | None = None
+) -> list[str]:
+    """Why an aircraft counts as military (empty list: not military)."""
+    evidence = []
+    if address.upper().startswith(US_MILITARY_BLOCK):
+        evidence.append("US military ICAO address block")
+    if plane_alert:
+        evidence.append("plane-alert-db military list")
+    if tar1090 and "military" in (tar1090.get("tags") or "").split(", "):
+        evidence.append("tar1090-db military flag")
+    if operator_code_name:
+        evidence.append(f"military operator code ({operator_code_name})")
+    return evidence
 
 
 def callword(callsign: str | None, operator_codes: set[str] = frozenset()) -> str | None:

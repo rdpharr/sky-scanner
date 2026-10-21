@@ -131,24 +131,31 @@ class CallwordTests(unittest.TestCase):
         self.assertIsNone(military.callword(None))
 
 
-# --- us_callsign_service --------------------------------------------------
+# --- military_evidence (rules mirror dbt's int_military_classification) -------
 
 
-class UsCallsignServiceTests(unittest.TestCase):
-    def test_coast_guard_on_us_military_address(self):
-        self.assertEqual(
-            military.us_callsign_service("AE26B7", "C6597"),
-            "US Coast Guard (aircraft number)",
-        )
+class MilitaryEvidenceTests(unittest.TestCase):
+    def test_ae_address_gives_us_block_evidence(self):
+        self.assertIn("US military ICAO address block", military.military_evidence("AE1234", None, None))
 
-    def test_non_us_address_returns_none(self):
-        self.assertIsNone(military.us_callsign_service("A01234", "C6597"))
+    def test_af_address_gives_us_block_evidence(self):
+        self.assertIn("US military ICAO address block", military.military_evidence("af1234", None, None))
 
-    def test_other_callsign_returns_none(self):
-        self.assertIsNone(military.us_callsign_service("AE26B7", "RCH123"))
+    def test_non_military_address_and_no_other_signal_is_empty(self):
+        self.assertEqual(military.military_evidence("A01234", None, None), [])
 
-    def test_no_callsign_returns_none(self):
-        self.assertIsNone(military.us_callsign_service("AE26B7", None))
+    def test_plane_alert_gives_evidence(self):
+        evidence = military.military_evidence("A01234", {"operator": "US Air Force"}, None)
+        self.assertIn("plane-alert-db military list", evidence)
+
+    def test_tar1090_military_tag_gives_evidence(self):
+        evidence = military.military_evidence("A01234", None, None, {"tags": "military, interesting"})
+        self.assertIn("tar1090-db military flag", evidence)
+        self.assertEqual(military.military_evidence("A01234", None, None, {"tags": "ladd"}), [])
+
+    def test_operator_code_name_gives_evidence(self):
+        evidence = military.military_evidence("A01234", None, "Air Mobility Command")
+        self.assertIn("military operator code (Air Mobility Command)", evidence)
 
 
 # --- parse_wwi_family / fetch_wwi_family --------------------------------------

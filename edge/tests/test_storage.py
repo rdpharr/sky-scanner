@@ -1,469 +1,216 @@
-import json
-import os
-import sys
-import types
 import unittest
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
 
-from sky_scanner.storage import (
-    _METADATA_FILL_ADDED_FIELDS,
-    _METADATA_INSERT_ABSENT,
-    _METADATA_INSERT_CHANGED,
-    PostgresStorage,
-)
+from sky_scanner.bq import SPECS
+from sky_scanner.storage import _METADATA_SCRIPT, _VALUE_COLUMNS, BigQueryStorage, stage_rows
+
+RETRIEVED = "2026-10-19T12:00:00Z"
 
 
-class StorageTests(unittest.TestCase):
-    def setUp(self):
-        self.connection = MagicMock()
-        self.cursor = self.connection.cursor.return_value
-        self.cursor.rowcount = 2
-        self.storage = PostgresStorage(self.connection)
+class FakeBigQuery:
+    def __init__(self, query_rows=None):
+        self.calls = []
+        self.query_rows = query_rows if query_rows is not None else [{"import_id": "imp-1", "changed": 3}]
 
-    def snapshot(self, start=0):
-        return {
-            "bucket_start": start,
-            "receiver_id": "rx1",
-            "address_type": "icao",
-            "address": "ABC123",
-            "frequency_hz": 1_090_000_000,
-            "first_received_at": start + 1,
-            "last_received_at": start + 4,
-            "message_count": 3,
-            "fields": {
-                "callsign": {"value": "TEST1", "timestamp": start + 4, "source": "adsb"},
-                "latitude": {"value": 37.5, "timestamp": start + 4, "source": "adsb"},
-                "longitude": {"value": -122.2, "timestamp": start + 4, "source": "adsb"},
-                "altitude_baro_ft": {"value": 12000, "timestamp": start + 2, "source": "adsb"},
-                "ground_speed_kt": {"value": 220, "timestamp": start + 3, "source": "adsb"},
-            },
-        }
+    def ensure_table(self, spec):
+        self.calls.append(("ensure", spec.name))
 
-    def test_snapshot_batch_uses_composite_idempotency_and_typed_json_fields(self):
-        count = self.storage.save_snapshots([self.snapshot(), self.snapshot(15)])
-        self.assertEqual(count, 2)
-        sql, rows = self.cursor.executemany.call_args.args
-        self.assertIn("ON CONFLICT (bucket_start, receiver_id, address_type, address, frequency_hz)", sql)
-        self.assertIn("DO NOTHING", sql)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0][0], datetime.fromtimestamp(0, UTC))
-        self.assertEqual(rows[0][8], "TEST1")
-        self.assertEqual(rows[0][11], 12000)
-        self.assertEqual(rows[0][13], 220)
-        self.assertEqual(json.loads(rows[0][-1])["callsign"]["timestamp"], 4)
-        self.connection.commit.assert_called_once()
-        self.cursor.close.assert_called_once()
+    def load(self, spec, rows, *, truncate=False):
+        rows = list(rows)
+        self.calls.append(("load", spec.name, rows, truncate))
+        return len(rows)
 
-    def test_empty_batch_does_not_open_transaction(self):
-        self.assertEqual(self.storage.save_snapshots([]), 0)
-        self.connection.cursor.assert_not_called()
+    def load_csv(self, table, data):
+        self.calls.append(("load_csv", table, data))
 
-    def test_snapshot_failure_rolls_back(self):
-        self.cursor.executemany.side_effect = RuntimeError("db unavailable")
-        with self.assertRaisesRegex(RuntimeError, "unavailable"):
-            self.storage.save_snapshots([self.snapshot()])
-        self.connection.rollback.assert_called_once()
-        self.connection.commit.assert_not_called()
+    def query(self, sql, params=None):
+        self.calls.append(("query", sql, params))
+        return self.query_rows
 
-    def test_receiver_and_capture_interval_are_parameterized(self):
-        self.storage.register_receiver("rx1", "desk", latitude=37.5, longitude=-122.2)
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn("ST_MakePoint(%s, %s)", sql)
-        self.assertEqual(params, ("rx1", "desk", -122.2, 37.5))
-        self.storage.save_capture_interval(
-            {
-                "receiver_id": "rx1",
-                "frequency_hz": 978_000_000,
-                "started_at": 100,
-                "ended_at": 130,
-                "decoder_version": "test",
-                "sample_config": {"rate": 20_000_000},
-            }
-        )
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn("INSERT INTO capture_intervals", sql)
-        self.assertEqual(params[1:3], ("rx1", 978_000_000))
-        self.assertEqual(json.loads(params[-1]), {"rate": 20_000_000})
+    def stream(self, spec, rows, **_):
+        self.calls.append(("stream", spec.name, rows))
+        return len(rows)
 
-    def test_metadata_import_bulk_batches_and_keeps_owner_separate(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": f"ABC{i:03X}",
-                "registration": f"N{i}",
-                "manufacturer": "ACME",
-                "model": "1",
-                "aircraft_type": "4",
-                "registered_owner": "Owner",
-                "operator": None,
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "sha256",
-            }
-            for i in range(3)
-        ]
-        with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
-            result = self.storage.save_metadata_import(records, batch_size=2)
-        self.assertEqual(result, "import-id")
-        calls = self.cursor.executemany.call_args_list
-        self.assertEqual([len(call.args[1]) for call in calls], [2, 1])
-        meta_sql, meta_rows = calls[0].args
-        self.assertIn("registered_owner, operator", meta_sql)
-        self.assertEqual(meta_rows[0][6:8], ("Owner", None))
-        self.assertEqual(meta_rows[0][1], "ABC000")
-        # Stage table setup, both changed/absent inserts, and the changed_count
-        # rollup all happen through cursor.execute, not executemany.
-        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
-        self.assertTrue(any("CREATE TEMP TABLE sky_metadata_stage" in sql for sql in executed_sql))
-        self.assertTrue(any("CREATE INDEX ON sky_metadata_stage" in sql for sql in executed_sql))
-        self.assertIn(_METADATA_INSERT_CHANGED, executed_sql)
-        self.assertIn(_METADATA_INSERT_ABSENT, executed_sql)
-        self.assertTrue(any("UPDATE enrichment_imports SET changed_count" in sql for sql in executed_sql))
-        self.connection.commit.assert_called_once()
+    def without_ensure(self):
+        return [c for c in self.calls if c[0] != "ensure"]
 
-    def test_metadata_import_failure_rolls_back(self):
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N1",
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "h",
-            }
-        ]
-        self.cursor.execute.side_effect = RuntimeError("boom")
-        with self.assertRaisesRegex(RuntimeError, "boom"):
-            self.storage.save_metadata_import(records, batch_size=1)
-        self.connection.rollback.assert_called_once()
-        self.connection.commit.assert_not_called()
-        self.cursor.close.assert_called_once()
 
-    def test_partial_import_skips_absent_insert(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N1",
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "h",
-            }
-        ]
-        self.storage.save_metadata_import(records, batch_size=1, partial=True)
-        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
-        self.assertIn(_METADATA_INSERT_CHANGED, executed_sql)
-        self.assertNotIn(_METADATA_INSERT_ABSENT, executed_sql)
-        self.connection.commit.assert_called_once()
+def record(address, **values):
+    return {
+        "icao_address": address,
+        "source_url": "https://faa.test/reg.zip",
+        "retrieved_at": RETRIEVED,
+        "dataset_hash": "hash1",
+        **values,
+    }
 
-    def test_default_partial_false_runs_absent_insert(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N1",
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "h",
-            }
-        ]
-        self.storage.save_metadata_import(records, batch_size=1)
-        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
-        self.assertIn(_METADATA_INSERT_CHANGED, executed_sql)
-        self.assertIn(_METADATA_INSERT_ABSENT, executed_sql)
 
-    def test_schema_has_historical_asof_metadata_and_postgis(self):
-        path = os.path.join(os.path.dirname(__file__), "..", "sql", "schema.sql")
-        with open(path, encoding="utf-8") as schema_file:
-            schema = schema_file.read()
-        self.assertIn("CREATE EXTENSION IF NOT EXISTS postgis", schema)
-        self.assertIn("ON aircraft_snapshots USING gist (position)", schema)
-        self.assertIn("metadata.retrieved_at <= s.bucket_start + interval '15 seconds'", schema)
-        self.assertIn("CREATE OR REPLACE VIEW enriched_snapshots_current", schema)
-        self.assertIn("UNIQUE (address_type, address, source_url, dataset_hash)", schema)
-        self.assertIn("registry_status", schema)
-        self.assertIn("CHECK (registry_status IN ('present', 'absent'))", schema)
-
-    def test_from_env_accepts_compose_database_url_and_imports_psycopg_lazily(self):
-        fake_psycopg = types.SimpleNamespace(connect=MagicMock(return_value=self.connection))
-        with (
-            patch.dict(os.environ, {"DATABASE_URL": "postgresql://test/db"}, clear=True),
-            patch.dict(sys.modules, {"psycopg": fake_psycopg}),
-        ):
-            storage = PostgresStorage.from_env()
-        self.assertIs(storage.connection, self.connection)
-        fake_psycopg.connect.assert_called_once_with("postgresql://test/db")
-
-    def test_metadata_import_uses_default_source_name_when_omitted(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N1",
-                "manufacturer": "ACME",
-                "model": "1",
-                "aircraft_type": "4",
-                "registered_owner": "Owner",
-                "operator": None,
-                "icao_type_code": "B77W",
-                "operator_icao": "KAL",
-                "country": "US",
-                "registrant_type": "3",
-                "year_mfr": 2004,
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "sha256",
-            }
-        ]
-        with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
-            self.storage.save_metadata_import(records, batch_size=1)
-        stage_rows = self.cursor.executemany.call_args_list[0].args[1]
-        self.assertEqual(len(stage_rows[0]), 15)
-        self.assertEqual(
-            stage_rows[0],
-            (
-                "icao",
-                "ABC123",
-                "N1",
-                "ACME",
-                "1",
-                "4",
-                "Owner",
-                None,
-                "B77W",
-                "KAL",
-                "US",
-                None,
-                None,
-                "3",
-                2004,
-            ),
-        )
-        insert_import_params = self.cursor.execute.call_args_list[0].args[1]
-        self.assertEqual(insert_import_params[-1], "faa_registry")
-        calls_by_sql = {
-            c.args[0]: c.args[1]
-            for c in self.cursor.execute.call_args_list
-            if len(c.args) > 1 and isinstance(c.args[1], dict)
-        }
-        self.assertEqual(calls_by_sql[_METADATA_INSERT_CHANGED]["source_name"], "faa_registry")
-        self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT]["source_name"], "faa_registry")
-
-    def test_metadata_import_passes_source_name_to_sql_and_params(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": "abc123",
-                "registration": None,
-                "manufacturer": None,
-                "model": None,
-                "aircraft_type": None,
-                "registered_owner": "Korean Air",
-                "operator": "Korean Air",
-                "icao_type_code": "B77W",
-                "operator_icao": "KAL",
-                "country": "Republic of Korea",
-                "source_url": "https://example.test/opensky.csv",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "sha256-opensky",
-            }
-        ]
-        self.storage.save_metadata_import(records, batch_size=1, source_name="opensky")
-        insert_import_params = self.cursor.execute.call_args_list[0].args[1]
-        self.assertEqual(insert_import_params[-1], "opensky")
-        stage_rows = self.cursor.executemany.call_args_list[0].args[1]
-        self.assertEqual(
-            stage_rows[0],
-            (
-                "icao",
-                "abc123",
-                None,
-                None,
-                None,
-                None,
-                "Korean Air",
-                "Korean Air",
-                "B77W",
-                "KAL",
-                "Republic of Korea",
-                None,
-                None,
-                None,
-                None,
-            ),
-        )
-        calls_by_sql = {
-            c.args[0]: c.args[1]
-            for c in self.cursor.execute.call_args_list
-            if len(c.args) > 1 and isinstance(c.args[1], dict)
-        }
-        self.assertEqual(calls_by_sql[_METADATA_INSERT_CHANGED]["source_name"], "opensky")
-        self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT]["source_name"], "opensky")
-        self.assertIn("m.source_name = %(source_name)s", _METADATA_INSERT_CHANGED)
-        self.assertIn("WHERE source_name = %(source_name)s", _METADATA_INSERT_ABSENT)
-
-    def test_added_fields_are_filled_in_place_before_change_detection(self):
-        self.cursor.fetchone.return_value = None
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N1",
-                "registrant_type": "1",
-                "year_mfr": 1975,
-                "source_url": "u",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "h",
-            }
-        ]
-        self.storage.save_metadata_import(records, batch_size=1)
-        sqls = [c.args[0] for c in self.cursor.execute.call_args_list]
-        self.assertLess(sqls.index(_METADATA_FILL_ADDED_FIELDS), sqls.index(_METADATA_INSERT_CHANGED))
-        # Only unknown values are filled, and only on each aircraft's latest version.
-        self.assertIn("m.registrant_type IS NULL AND m.year_mfr IS NULL", _METADATA_FILL_ADDED_FIELDS)
-        self.assertIn("ORDER BY latest.retrieved_at DESC, latest.id DESC LIMIT 1", _METADATA_FILL_ADDED_FIELDS)
-        # A null added field on the latest version is unknown, not a change.
-        self.assertIn("latest.registrant_type IS NOT NULL", _METADATA_INSERT_CHANGED)
-        self.assertIn("latest.year_mfr IS NOT NULL", _METADATA_INSERT_CHANGED)
-
-    def test_same_source_hash_reimport_does_not_create_new_metadata_version(self):
-        records = [
-            {
-                "icao_address": "ABC123",
-                "registration": "N12345",
-                "source_url": "https://example.test/data",
-                "retrieved_at": "2026-01-01T00:00:00Z",
-                "dataset_hash": "same-hash",
-            }
-        ]
-        self.storage.save_metadata_import(records, batch_size=1)
-        # The idempotency guard now lives on the changed/absent INSERT ... SELECT
-        # statements, executed individually (not as part of the executemany
-        # stage-table load), each keyed with a dict of shared params.
-        calls_by_sql = {
-            c.args[0]: c.args[1]
-            for c in self.cursor.execute.call_args_list
-            if len(c.args) > 1 and isinstance(c.args[1], dict)
-        }
-        self.assertIn(_METADATA_INSERT_CHANGED, calls_by_sql)
-        self.assertIn(_METADATA_INSERT_ABSENT, calls_by_sql)
-        self.assertIn("ON CONFLICT (address_type, address, source_url, dataset_hash)", _METADATA_INSERT_CHANGED)
-        self.assertIn("DO NOTHING", _METADATA_INSERT_CHANGED)
-        self.assertIn("ON CONFLICT (address_type, address, source_url, dataset_hash)", _METADATA_INSERT_ABSENT)
-        self.assertIn("DO NOTHING", _METADATA_INSERT_ABSENT)
-        # Changed-only writes require the registry fields to actually differ...
-        self.assertIn("IS DISTINCT FROM", _METADATA_INSERT_CHANGED)
-        # ...while a dropped-from-registry aircraft is recorded as absent.
-        self.assertIn("'absent'", _METADATA_INSERT_ABSENT)
-        params = calls_by_sql[_METADATA_INSERT_CHANGED]
-        self.assertEqual(params["source_url"], "https://example.test/data")
-        self.assertEqual(params["dataset_hash"], "same-hash")
-        self.assertEqual(calls_by_sql[_METADATA_INSERT_ABSENT], params)
-
-    def test_replace_military_operator_codes_rejects_empty_list_without_touching_cursor(self):
-        with self.assertRaisesRegex(ValueError, "empty"):
-            self.storage.replace_military_operator_codes(
-                [],
-                source_url="https://example.test/ops.csv",
-                retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
-                dataset_hash="h",
-            )
-        self.connection.cursor.assert_not_called()
-
-    def test_replace_military_operator_codes_deletes_then_inserts_and_commits(self):
-        self.cursor.fetchone.return_value = None
-        codes = [
-            {"code": "RCH", "name": "Air Mobility Command"},
-            {"code": "CNV", "name": "US Navy"},
-        ]
-        with patch("sky_scanner.storage.uuid.uuid4", return_value="import-id"):
-            result = self.storage.replace_military_operator_codes(
-                codes,
-                source_url="https://example.test/ops.csv",
-                retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
-                dataset_hash="h",
-            )
-        self.assertEqual(result, "import-id")
-        executed_sql = [c.args[0] for c in self.cursor.execute.call_args_list]
-        self.assertTrue(any("'military_operator_codes'" in sql for sql in executed_sql))
-        self.assertTrue(any(sql.strip().startswith("DELETE FROM military_operator_codes") for sql in executed_sql))
-        insert_sql, insert_rows = self.cursor.executemany.call_args.args
-        self.assertIn("INSERT INTO military_operator_codes", insert_sql)
-        self.assertEqual(
-            insert_rows,
+class StageRowTests(unittest.TestCase):
+    def test_one_row_per_address_with_typed_values(self):
+        rows = stage_rows(
             [
-                ("RCH", "Air Mobility Command", "import-id"),
-                ("CNV", "US Navy", "import-id"),
+                record("ABC123", registration="N1", year_mfr="1999", registered_owner="Owner"),
+                record("ABC123", registration="N2"),
+                {"address_type": "tisb_other", "address": "ABC123", "model": 737},
+            ]
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["registration"], "N1")
+        self.assertEqual((rows[0]["year_mfr"], rows[0]["registered_owner"]), (1999, "Owner"))
+        self.assertEqual((rows[1]["address_type"], rows[1]["model"]), ("tisb_other", "737"))
+
+    def test_unusable_year_becomes_null(self):
+        self.assertIsNone(stage_rows([record("ABC123", year_mfr="unknown")])[0]["year_mfr"])
+
+
+class MetadataImportTests(unittest.TestCase):
+    def setUp(self):
+        self.bq = FakeBigQuery()
+        self.storage = BigQueryStorage(self.bq)
+
+    def test_stages_then_runs_the_version_script_once(self):
+        import_id = self.storage.save_metadata_import([record("ABC123"), record("DEF456")], source_name="faa_registry")
+        self.assertEqual(import_id, "imp-1")
+        (load, query) = self.bq.without_ensure()
+        self.assertEqual(load[:2], ("load", "_stage_metadata_faa_registry"))
+        self.assertTrue(load[3])  # replaces any leftover staging rows
+        sql, params = query[1], query[2]
+        self.assertIn("FROM {dataset}._stage_metadata_faa_registry AS s", sql)
+        self.assertNotIn("{stage}", sql)
+        self.assertEqual(
+            params,
+            {
+                "source_name": "faa_registry",
+                "source_url": "https://faa.test/reg.zip",
+                "retrieved_at": datetime(2026, 10, 19, 12, tzinfo=UTC),
+                "dataset_hash": "hash1",
+                "record_count": 2,
+                "partial": False,
+            },
+        )
+
+    def test_partial_imports_say_so(self):
+        self.storage.save_metadata_import([record("ABC123")], source_name="tar1090_db", partial=True)
+        self.assertTrue(self.bq.without_ensure()[1][2]["partial"])
+
+    def test_refuses_a_full_import_without_records(self):
+        with self.assertRaisesRegex(ValueError, "every aircraft would become absent"):
+            self.storage.save_metadata_import(
+                [], source_url="u", retrieved_at=RETRIEVED, dataset_hash="h", source_name="faa_registry"
+            )
+        self.assertEqual(self.bq.without_ensure(), [])
+
+    def test_requires_provenance(self):
+        with self.assertRaises(ValueError):
+            self.storage.save_metadata_import([{"icao_address": "ABC123"}])
+
+    def test_rejects_unsafe_source_names(self):
+        with self.assertRaises(ValueError):
+            self.storage.save_metadata_import([record("ABC123")], source_name="x; drop table")
+
+    def test_tables_are_checked_once(self):
+        self.storage.save_metadata_import([record("ABC123")])
+        self.storage.save_metadata_import([record("ABC123")])
+        ensured = [c[1] for c in self.bq.calls if c[0] == "ensure"]
+        self.assertEqual(
+            ensured,
+            [
+                "aircraft_metadata",
+                "enrichment_imports",
+                "military_operator_codes",
+                "callword_lookups",
+                "aircraft_type_images",
+                "enrichment_runs",
             ],
         )
-        self.connection.commit.assert_called_once()
 
-    def test_replace_military_operator_codes_rolls_back_on_failure(self):
-        self.cursor.execute.side_effect = RuntimeError("boom")
-        with self.assertRaisesRegex(RuntimeError, "boom"):
-            self.storage.replace_military_operator_codes(
-                [{"code": "RCH", "name": "x"}],
-                source_url="u",
-                retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
-                dataset_hash="h",
-            )
-        self.connection.rollback.assert_called_once()
-        self.connection.commit.assert_not_called()
 
-    def test_save_callword_lookup_encodes_status_and_data_as_json(self):
-        fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
-        self.storage.save_callword_lookup(
-            "TALON", "found", "https://wwi/TALON", {"types": [{"name": "H60", "count": 27}]}, fetched_at=fetched_at
+class MetadataScriptTests(unittest.TestCase):
+    """The rules of change detection, as written in the script (run live in the rehearsal)."""
+
+    def test_every_value_column_is_compared(self):
+        for column in _VALUE_COLUMNS:
+            self.assertIn(f"l.{column} IS DISTINCT FROM s.{column}", _METADATA_SCRIPT)
+
+    def test_fields_added_later_only_count_when_known(self):
+        for column in ("registrant_type", "year_mfr"):
+            self.assertIn(f"(l.{column} IS NOT NULL AND l.{column} IS DISTINCT FROM s.{column})", _METADATA_SCRIPT)
+
+    def test_absent_versions_only_for_full_imports(self):
+        self.assertIn("WHERE NOT @partial", _METADATA_SCRIPT)
+
+    def test_writes_happen_in_one_transaction_and_staging_is_dropped(self):
+        begin, commit = _METADATA_SCRIPT.index("BEGIN TRANSACTION"), _METADATA_SCRIPT.index("COMMIT TRANSACTION")
+        self.assertLess(begin, _METADATA_SCRIPT.index("INSERT INTO {dataset}.aircraft_metadata"))
+        self.assertLess(_METADATA_SCRIPT.index("MERGE {dataset}.enrichment_imports"), commit)
+        self.assertLess(commit, _METADATA_SCRIPT.index("DROP TABLE {stage}"))
+
+    def test_reuses_the_import_row_of_the_same_dataset(self):
+        self.assertIn("WHERE source_url = @source_url AND dataset_hash = @dataset_hash", _METADATA_SCRIPT)
+        self.assertIn("changed_count = COALESCE(i.changed_count, 0) + changed", _METADATA_SCRIPT)
+
+
+class OtherWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.bq = FakeBigQuery(query_rows=[{"n": 1}])
+        self.storage = BigQueryStorage(self.bq)
+
+    def test_import_exists_with_and_without_a_hash(self):
+        self.assertTrue(self.storage.import_exists("u", "h"))
+        self.assertTrue(self.storage.import_exists("u"))
+        (_, with_hash, with_params), (_, without_hash, without_params) = self.bq.without_ensure()
+        self.assertIn("dataset_hash = @dataset_hash", with_hash)
+        self.assertEqual(with_params, {"source_url": "u", "dataset_hash": "h"})
+        self.assertNotIn("dataset_hash", without_hash)
+        self.assertEqual(without_params, {"source_url": "u"})
+
+    def test_import_exists_is_false_for_no_rows(self):
+        self.bq.query_rows = [{"n": 0}]
+        self.assertFalse(self.storage.import_exists("u"))
+
+    def test_operator_codes_are_replaced_before_the_import_is_recorded(self):
+        import_id = self.storage.replace_military_operator_codes(
+            [{"code": "RCH", "name": "Air Mobility Command"}], source_url="u", retrieved_at=RETRIEVED, dataset_hash="h"
         )
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn("INSERT INTO callword_lookups", sql)
-        self.assertEqual(params[0], "TALON")
-        self.assertEqual(params[1], "found")
-        self.assertEqual(params[2], "https://wwi/TALON")
-        self.assertEqual(json.loads(params[4]), {"types": [{"name": "H60", "count": 27}]})
-        self.connection.commit.assert_called_once()
+        (load, query) = self.bq.without_ensure()
+        self.assertEqual(load[:2], ("load", "military_operator_codes"))
+        self.assertEqual(load[2], [{"code": "RCH", "name": "Air Mobility Command", "import_id": import_id}])
+        self.assertTrue(load[3])
+        self.assertEqual(query[2]["import_id"], import_id)
+        self.assertEqual(query[2]["source_name"], "military_operator_codes")
 
-    def test_save_callword_lookup_none_data_is_null_param(self):
-        self.storage.save_callword_lookup("TALON", "not_found", "https://wwi/TALON", None)
-        sql, params = self.cursor.execute.call_args.args
-        self.assertEqual(params[1], "not_found")
-        self.assertIsNone(params[4])
+    def test_operator_codes_refuse_an_empty_set(self):
+        with self.assertRaises(ValueError):
+            self.storage.replace_military_operator_codes([], source_url="u", retrieved_at=RETRIEVED, dataset_hash="h")
+        self.assertEqual(self.bq.calls, [])
 
-    def test_save_type_image_found_result_sets_status_and_fields(self):
-        fetched_at = datetime(2026, 1, 1, tzinfo=UTC)
-        result = {
-            "title": "Boeing 737-800",
-            "description": "Narrow-body airliner",
-            "article_url": "https://en.wikipedia.org/wiki/Boeing_737_Next_Generation",
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/X.jpg/330px-X.jpg",
-            "file_url": "https://commons.wikimedia.org/wiki/File:X.jpg",
-        }
-        self.storage.save_type_image("B738", "Boeing 737-800", "designator_list", result, fetched_at=fetched_at)
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn("INSERT INTO aircraft_type_images", sql)
-        self.assertIn("ON CONFLICT (designator)", sql)
-        self.assertEqual(params[0], "B738")
-        self.assertEqual(params[1], "Boeing 737-800")
-        self.assertEqual(params[2], "found")
-        self.assertEqual(params[3], "designator_list")
-        self.assertEqual(params[4], "Boeing 737-800")
-        self.assertEqual(params[5], "Narrow-body airliner")
-        self.assertEqual(params[6], result["article_url"])
-        self.assertEqual(params[7], result["image_url"])
-        self.assertEqual(params[8], result["file_url"])
-        self.connection.commit.assert_called_once()
+    def test_callword_lookups_are_streamed(self):
+        self.storage.save_callword_lookup("TALON", "found", "https://wwi.test/TALON", {"countries": ["US"]}, 0)
+        ((_, table, (row,)),) = self.bq.without_ensure()
+        self.assertEqual(table, "callword_lookups")
+        self.assertEqual(row["fetched_at"], datetime(1970, 1, 1, tzinfo=UTC))
+        self.assertEqual((row["word"], row["status"], row["data"]), ("TALON", "found", {"countries": ["US"]}))
+        self.assertEqual(set(row) | {"_replicated_at"}, set(SPECS["callword_lookups"].column_names))
 
-    def test_save_type_image_none_result_sets_not_found_with_null_fields(self):
-        self.storage.save_type_image("ZZZZ", "Unknown Model", "search", None)
-        sql, params = self.cursor.execute.call_args.args
-        self.assertEqual(params[0], "ZZZZ")
-        self.assertEqual(params[1], "Unknown Model")
-        self.assertEqual(params[2], "not_found")
-        self.assertEqual(params[3], "search")
-        self.assertIsNone(params[4])
-        self.assertIsNone(params[5])
-        self.assertIsNone(params[6])
-        self.assertIsNone(params[7])
-        self.assertIsNone(params[8])
+    def test_type_images_record_found_and_not_found(self):
+        self.storage.save_type_image("B738", "Boeing 737-800", "designator_list", {"title": "Boeing 737", "x": 1})
+        self.storage.save_type_image("ZZZZ", None, "search", None)
+        (_, _, (found,)), (_, _, (missing,)) = self.bq.without_ensure()
+        self.assertEqual((found["status"], found["title"]), ("found", "Boeing 737"))
+        self.assertNotIn("x", found)
+        self.assertEqual((missing["status"], missing["title"], missing["image_url"]), ("not_found", None, None))
+        self.assertEqual(set(found) | {"_replicated_at"}, set(SPECS["aircraft_type_images"].column_names))
+
+    def test_runs_are_streamed(self):
+        now = datetime(2026, 10, 19, tzinfo=UTC)
+        self.storage.record_run("callwords", now, now, "ok", {"looked_up": []}, None)
+        ((_, table, (row,)),) = self.bq.without_ensure()
+        self.assertEqual(table, "enrichment_runs")
+        self.assertEqual(set(row) | {"_replicated_at"}, set(SPECS["enrichment_runs"].column_names))
+
+    def test_reference_csv_is_loaded(self):
+        self.storage.load_reference_csv("doc8643_types", b"Designator\n")
+        self.assertEqual(self.bq.calls, [("load_csv", "doc8643_types", b"Designator\n")])
 
 
 if __name__ == "__main__":
