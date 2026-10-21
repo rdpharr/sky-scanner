@@ -887,12 +887,9 @@ async def health(request):
     return JSONResponse({"status": "ok"})
 
 
-def main() -> None:
-    if os.environ.get("MCP_TRANSPORT", "stdio") == "stdio":
-        mcp.run("stdio")
-        return
-    import uvicorn
+def http_app():
     from mcp.server.transport_security import TransportSecuritySettings
+    from starlette.responses import PlainTextResponse
 
     app = mcp.streamable_http_app(
         stateless_http=True,  # any Cloud Run instance can answer any request
@@ -902,8 +899,33 @@ def main() -> None:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         host="0.0.0.0",
     )
+    refuse_get = PlainTextResponse("Method Not Allowed", status_code=405, headers={"Allow": "POST"})
+
+    async def no_get_stream(scope, receive, send):
+        # The server never pushes messages, so refuse the optional GET stream
+        # (the spec allows 405). Clients hold it open until Cloud Run's
+        # request timeout and reconnect, which kept an instance billed all
+        # day while any client was connected.
+        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"].rstrip("/") == "/mcp":
+            await refuse_get(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return no_get_stream
+
+
+def main() -> None:
+    if os.environ.get("MCP_TRANSPORT", "stdio") == "stdio":
+        mcp.run("stdio")
+        return
+    import uvicorn
+
     uvicorn.run(
-        app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), proxy_headers=True, forwarded_allow_ips="*"
+        http_app(),
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 

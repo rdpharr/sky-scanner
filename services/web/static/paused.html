@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sky Scanner (paused)</title>
+<style>
+  :root { --bg: #FAFBF8; --text: #1B2330; --muted: #4A5566; --accent: #A3236F; --on-accent: #FFFFFF; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141B24; --text: #E6E9EE; --muted: #A9B2BF; --accent: #C2408A; --on-accent: #FFFFFF; }
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text);
+         font: 16px/1.5 "Public Sans", system-ui, sans-serif; }
+  main { max-width: 32rem; padding: 2rem 1rem; text-align: center; }
+  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
+  p { color: var(--muted); margin: 0 0 1.5rem; }
+  a { display: inline-block; padding: .6rem 1.2rem; border-radius: .25rem; background: var(--accent);
+      color: var(--on-accent); text-decoration: none; font-weight: 600; }
+  a:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sky Scanner is paused</h1>
+  <p>This tab was idle for a while, so it disconnected from the server.</p>
+  <a id="resume" href="/">Resume</a>
+</main>
+<script>
+  // Return to the page the tab was on; only same-site paths are accepted.
+  const next = new URLSearchParams(location.search).get("next") || "/";
+  if (/^\/(?![\/\\])/.test(next)) document.getElementById("resume").href = next;
+</script>
+</body>
+</html>

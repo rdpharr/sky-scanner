@@ -116,5 +116,28 @@ class ToolTests(unittest.TestCase):
             server.run_sql("select 1", ctx)
 
 
+class HttpTests(unittest.TestCase):
+    def test_refuses_the_get_stream_but_answers_posts(self):
+        from starlette.testclient import TestClient
+
+        headers = {"Accept": "application/json, text/event-stream"}
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "1"},
+            },
+        }
+        with TestClient(server.http_app()) as http:
+            self.assertEqual(http.get("/mcp", headers=headers).status_code, 405)
+            response = http.post("/mcp", headers=headers, json=initialize)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["result"]["serverInfo"]["name"], "sky-scanner")
+            self.assertEqual(http.get("/health").status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

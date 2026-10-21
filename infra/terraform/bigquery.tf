@@ -37,3 +37,14 @@ resource "google_bigquery_dataset_access" "public_views" {
     target_types = ["VIEWS"]
   }
 }
+
+# Cloud Billing's standard usage cost export, written by Google. Terraform
+# cannot turn the export on; it is enabled once in the console (see
+# docs/runbook.md, Costs).
+resource "google_bigquery_dataset" "billing" {
+  dataset_id  = "billing"
+  description = "Cloud Billing standard usage cost export, written by Google."
+  location    = var.bq_location
+
+  delete_contents_on_destroy = false
+}
