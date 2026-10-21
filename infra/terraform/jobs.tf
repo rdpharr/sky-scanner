@@ -3,7 +3,7 @@ locals {
   dbt_jobs = {
     hourly    = { schedule = "5 * * * *", description = "dbt build except daily-tagged models" }
     daily     = { schedule = "35 6 * * *", description = "dbt build of everything" }
-    freshness = { schedule = "*/15 * * * *", description = "dbt source freshness (receiver and replication alive)" }
+    freshness = { schedule = "*/30 * * * *", description = "dbt source freshness (receiver and replication alive)" }
   }
 }
 

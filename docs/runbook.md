@@ -18,7 +18,7 @@ R=us-central1-docker.pkg.dev/sky-scanner-pharr/sky-scanner   # Artifact Registry
 | Replicator (Postgres → BigQuery `raw`) | Home, Compose service `replicator` | Every 30 s | `sky-edge` (writes `raw` only) | `docker compose logs --since 10m replicator` |
 | dbt build | Cloud Run job `dbt-hourly` | :05 past each hour (UTC) | `sky-dbt` | Data health page; `gcloud run jobs executions list --job dbt-hourly --region us-central1` |
 | dbt build including daily-tagged models | Cloud Run job `dbt-daily` | 06:35 UTC | `sky-dbt` | as above |
-| Source freshness | Cloud Run job `dbt-freshness` | Every 15 min | `sky-dbt` | as above |
+| Source freshness | Cloud Run job `dbt-freshness` | Every 30 min | `sky-dbt` | as above |
 | Website | Cloud Run service `web`, skyscanner.pharrhomelab.com | Always on | `sky-web` (reads `public`) | Open the site |
 | MCP server | Cloud Run service `mcp`, mcp.skyscanner.pharrhomelab.com | Always on | `sky-mcp` (reads `public`) | `curl https://mcp.skyscanner.pharrhomelab.com/health` |
 | Notable edition | Cloud Run job `notable-edition` | Mondays 06:00 Pacific | `sky-notable` (reads `public`, writes `ai`) | Notable page; `gcloud run jobs executions list --job notable-edition --region us-central1` |
@@ -63,7 +63,7 @@ freshness limit.
    daily reload failed: look for the error in
    `docker compose logs --since 26h replicator`.
 5. If the computer slept or rebooted, `docker compose up -d`.
-6. Confirm recovery: the next `dbt-freshness` run (within 15 minutes) shows
+6. Confirm recovery: the next `dbt-freshness` run (within 30 minutes) shows
    no errors on the Data health page, and the policy closes itself after
    30 minutes.
 
@@ -260,6 +260,26 @@ get its certificate.
 - BigQuery query quota of 100 GiB per user per day (Terraform).
 - Byte caps per query: dbt 2 GB, website 500 MB, MCP `run_sql` 1 GB (dry run
   first).
+- Cloud Run is the main cost, and it bills an instance at the full rate for
+  as long as any request is open. Open connections, not traffic, drive it:
+  - The website keeps a websocket per open tab. Tabs idle for 15 minutes go
+    to a static "paused" page (`services/web/app.py`), and the request
+    timeout is 5 minutes. The one warm instance (`min_instance_count = 1`)
+    costs about $13 a month when idle.
+  - The MCP server refuses the optional `GET /mcp` stream (405), and its
+    request timeout is 60 seconds. Before that, connected Claude sessions
+    held it busy all day (about $1.30 a day).
+  - `dbt-freshness` runs every 30 minutes, mostly dbt start-up time.
+- Billing data is exported to the `billing` dataset (standard usage cost;
+  enabled in the console under Billing → Billing export → BigQuery export).
+  Cost by service for the last 7 days:
+  ```sh
+  bq query --use_legacy_sql=false 'select service.description service, sku.description sku,
+      round(sum(cost),2) cost, round(sum((select sum(amount) from unnest(credits))),2) credits
+    from `sky-scanner-pharr.billing.gcp_billing_export_v1_*`
+    where usage_start_time > timestamp_sub(current_timestamp(), interval 7 day)
+    group by 1,2 having cost > 0.01 order by cost desc'
+  ```
 - Measured when scheduling started (2026-10-16): about 610 GB of queries a
   month, within the 1 TB free tier; most of it is the 10 MB minimum per
   test. It grows with history, since several models rebuild in full. Notable editions cost about

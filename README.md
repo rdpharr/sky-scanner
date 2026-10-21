@@ -23,7 +23,7 @@ text, so a person and an agent asking "how many aircraft were heard?" get
 the same answer.
 
 **Data quality that alerts.** dbt rebuilds hourly and checks source freshness
-every 15 minutes on Cloud Run. Failures become structured log lines, which
+every 30 minutes on Cloud Run. Failures become structured log lines, which
 log-based alert policies turn into email. Results land in BigQuery and drive
 the Data health page.
 
@@ -58,7 +58,7 @@ HackRF ─▶ receiver ─▶ ingest ─▶ Postgres ◀─ enrichment (FAA, tar
                                    │                     plane-alert-db, Wikipedia)
                              replicator ── streaming inserts, ~30 s ──▶ BigQuery raw
                                                                           │
-          Cloud Scheduler ─▶ Cloud Run job: dbt (hourly build, freshness every 15 min)
+          Cloud Scheduler ─▶ Cloud Run job: dbt (hourly build, freshness every 30 min)
                                                                           ▼
                                      analytics: staging → intermediate → marts
                                                                           ▼

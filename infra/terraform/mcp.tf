@@ -38,6 +38,9 @@ resource "google_cloud_run_v2_service" "mcp" {
   template {
     service_account                  = google_service_account.this["mcp"].email
     max_instance_request_concurrency = 40
+    # Tool calls take seconds. A short timeout caps requests that clients
+    # leave open (each one keeps an instance billed until it ends).
+    timeout = "60s"
 
     scaling {
       # Scale to zero: MCP clients tolerate a cold start of a few seconds.

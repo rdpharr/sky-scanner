@@ -4,6 +4,30 @@ import streamlit as st
 
 st.set_page_config(page_title="Sky Scanner", page_icon="✈️")  # layout is set per page
 
+# An open tab holds a websocket, which keeps a Cloud Run instance billed at the
+# full rate. After IDLE_MINUTES without input, send the tab to a static page
+# (static/paused.html) that closes the connection and offers to resume.
+IDLE_MINUTES = 15
+st.html(
+    f"""<script>
+(() => {{
+  if (window.skyIdleWatch) return;
+  window.skyIdleWatch = true;
+  let last = Date.now();
+  const seen = () => {{ last = Date.now(); }};
+  for (const e of ["pointerdown", "pointermove", "keydown", "wheel", "scroll", "touchstart"]) {{
+    window.addEventListener(e, seen, {{ passive: true, capture: true }});
+  }}
+  setInterval(() => {{
+    if (Date.now() - last < {IDLE_MINUTES * 60_000}) return;
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.replace("/app/static/paused.html?next=" + next);
+  }}, 30_000);
+}})();
+</script>""",
+    unsafe_allow_javascript=True,
+)
+
 pages = st.navigation(
     {
         "": [

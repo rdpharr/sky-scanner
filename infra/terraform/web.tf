@@ -10,8 +10,10 @@ resource "google_cloud_run_v2_service" "web" {
   template {
     service_account = google_service_account.this["web"].email
     # Streamlit keeps a websocket per viewer: stick each viewer to one instance.
+    # An open websocket keeps the instance billed at the full rate, so the
+    # page lets idle tabs disconnect (app.py) and the timeout caps the rest.
     session_affinity                 = true
-    timeout                          = "3600s"
+    timeout                          = "300s"
     max_instance_request_concurrency = 80
 
     scaling {
