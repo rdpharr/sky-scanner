@@ -264,8 +264,9 @@ get its certificate.
   as long as any request is open. Open connections, not traffic, drive it:
   - The website keeps a websocket per open tab. Tabs idle for 15 minutes go
     to a static "paused" page (`services/web/app.py`), and the request
-    timeout is 5 minutes. The one warm instance (`min_instance_count = 1`)
-    costs about $13 a month when idle.
+    timeout is 5 minutes. The service scales to zero
+    (`min_instance_count = 0`), so the first visitor after an idle spell
+    waits for a cold start. A warm instance would cost about $13 a month.
   - The MCP server refuses the optional `GET /mcp` stream (405), and its
     request timeout is 60 seconds. Before that, connected Claude sessions
     held it busy all day (about $1.30 a day).
