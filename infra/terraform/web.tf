@@ -17,8 +17,9 @@ resource "google_cloud_run_v2_service" "web" {
     max_instance_request_concurrency = 80
 
     scaling {
-      # One warm instance avoids Streamlit's slow cold start for visitors.
-      min_instance_count = 1
+      # Scale to zero: a warm instance cost about $13 a month idle. The first
+      # visitor after an idle spell waits for Streamlit's cold start.
+      min_instance_count = 0
       max_instance_count = 3
     }
 
